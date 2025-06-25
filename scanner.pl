@@ -143,19 +143,58 @@ for my $file (@ARGV) {
     my $raw = $st->schild(1)->content;  
     my $ln  = $st->line_number;
 
-    # Inline known sub calls: foo() → constant
+    # ──────────────────────────────────────────────────────────────────────────
+    # STEP 0: trivial sub-call constants
+    #    catch “if (foo() == 10)” *before* we inline it away
+    # ──────────────────────────────────────────────────────────────────────────
+  {
+    if ( $raw =~ /^\s*\(\s*([A-Za-z_]\w*)\(\)\s*(>=|>|==|<=|<|eq|ne)\s*(\d+)\s*\)/ ) {
+      my ($fn,$op,$val) = ($1,$2,$3);
+      if ( exists $CONST{"__SUB__$fn"} ) {
+        my $c = $CONST{"__SUB__$fn"};
+        # equality, always-true if they match
+        if (($op eq '==' || $op eq 'eq') && $c == $val) {
+          my $msg = qq{always-true test "$fn() $op $val"};
+          if ($do_sarif) {
+            push @sarif_results, {
+              ruleId  => "always-true-test",
+              level   => "warning",
+              message => { text => $msg },
+              locations => [{
+                physicalLocation=>{
+                  artifactLocation=>{ uri=>$file },
+                  region=>{ startLine=>$ln },
+                }
+              }],
+            };
+          }
+          else {
+            printf "[%s:%d] %s\n", $file,$ln,$msg;
+          }
+          next;
+        }
+        # you could add an always-false branch here if needed
+      }
+    }
+  }
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Now inline any remaining known sub calls
+  # ──────────────────────────────────────────────────────────────────────────
     $raw =~ s{\b([A-Za-z_]\w*)\(\)}{
       exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()"
     }eg;
+ 
+    # ──────────────────────────────────────────────────────────────────────────
+    # STEP 1: var-based always-true / always-false
+    # ──────────────────────────────────────────────────────────────────────────
+  if ( my ($var,$op,$val) = parse_cond($raw) ) {
+    if ( exists $CONST{$var} ) {
+      my $c = $CONST{$var};
 
-    #
-    # 1) ALWAYS‐TRUE / ALWAYS‐FALSE tests
-    #
-    if ( my ($var,$op,$val) = parse_cond($raw) ) {
-      if ( exists $CONST{$var} ) {
-        my $c = $CONST{$var};
-        if ($op =~ />=?/ && $c >= $val) {
-          my $msg = qq{always-true test "\$$var $op $val" (known \$$var == $c)};
+      # always-true: “$x > 3” when x==5
+      if ($op =~ /^>=?$/ && $c >= $val) {
+                my $msg = qq{always-true test "\$$var $op $val" (known \$$var == $c)};
           if ($do_sarif) {
             push @sarif_results, {
               ruleId    => "always-true-test",
@@ -170,9 +209,10 @@ for my $file (@ARGV) {
             printf "[%s:%d] %s\n", $file, $ln, $msg;
           }
           next;
-        }
-        elsif ($op =~ /<=?/ && $c <= $val) {
-          my $msg = qq{always-false test "\$$var $op $val" (known \$$var == $c)};
+      }
+      elsif ($op =~ /<=?/ && $c <= $val) {
+      # always-false: “$x < 1” when x==5
+                my $msg = qq{always-false test "\$$var $op $val" (known \$$var == $c)};
           if ($do_sarif) {
             push @sarif_results, {
               ruleId    => "always-false-test",
@@ -187,9 +227,29 @@ for my $file (@ARGV) {
             printf "[%s:%d] %s\n", $file, $ln, $msg;
           }
           next;
+      } elsif ($op eq '<'  && $c >= $val
+          || $op eq '<=' && $c >  $val) {
+        my $msg = qq{always-false test "\$$var $op $val" (known \$$var == $c)};
+        if ($do_sarif) {
+          push @sarif_results, {
+            ruleId  => "always-false-test",
+            level   => "warning",
+            message => { text => $msg },
+            locations => [{
+              physicalLocation=>{
+                artifactLocation=>{ uri=>$file },
+                region=>{ startLine=>$ln },
+              }
+            }],
+          };
+        }
+        else {
+          printf "[%s:%d] %s\n", $file,$ln,$msg;
         }
       }
-    }
+     }
+   }
+    
 
     #
     # 2) BOOLEAN‐AND/OR redundancy
