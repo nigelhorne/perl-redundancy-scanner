@@ -5,11 +5,9 @@ A PPI-based tool to detect redundant boolean tests and nested-block conditions
 
 ## Install
 
-    git clone git@github.com:you/perl-redundancy-scanner.git
+    git clone git@github.com:nigelhorne/perl-redundancy-scanner.git
     cd perl-redundancy-scanner
     cpanm PPI Scalar::Util DateTime
-
-Or bundle into a distro with `dzil`.
 
 ## Usage
 
