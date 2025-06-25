@@ -41,7 +41,7 @@ sub parse_cond {
 # ∀x: (x opA valA) ⇒ (x opB valB)?
 #
 sub implies {
-  my ($opA,$vA,$opB,$vB) = map { "" . $_ } @_;  # stringify ops
+  my ($opA,$vA,$opB,$vB) = map { '' . $_ } @_;  # stringify ops
   return unless $opA =~ /^(?:>=?|<=?|==|eq|ne)$/ && $opB =~ /^(?:>=?|<=?|==|eq|ne)$/;
   return unless defined( my $nA = coerce_number($vA) )
 	         && defined( my $nB = coerce_number($vB) );
@@ -60,19 +60,19 @@ my $SARIF_SCHEMA  = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.
 my @RULE_DEFS = (
   { id => "boolean-redundancy",
 	shortDescription => { text => "Redundant comparison in boolean expression" },
-	helpUri         => "" },
+	helpUri         => '' },
   { id => "nested-threshold",
 	shortDescription => { text => "Nested numeric threshold redundant" },
-	helpUri         => "" },
+	helpUri         => '' },
   { id => "identical-structure",
 	shortDescription => { text => "Identical nested condition" },
-	helpUri         => "" },
+	helpUri         => '' },
   { id => "duplicate-test",
 	shortDescription => { text => "Exact duplicate test" },
-	helpUri         => "" },
+	helpUri         => '' },
   { id => "duplicate-regex",
 	shortDescription => { text => "Duplicate regex match" },
-	helpUri         => "" },
+	helpUri         => '' },
 );
 
 # gather SARIF results here
@@ -316,11 +316,14 @@ for my $file (@ARGV) {
 		push @{ $buckets{$t} }, $blk->line_number;
 	}
 	for my $txt (keys %buckets) {
-	    my $aref = $buckets{$txt};
-	    next unless @$aref > 1;
-	    my @lines = sort { $a <=> $b } @$aref;
-	    printf "[%s] clone of %d-line block at lines %s\n",
-	      $file, (() = $txt =~ /\n/g)+1, join(", ", @lines);
+		my $lines = $buckets{$txt};
+		next unless @$lines > 1;
+		my $nlines = ($txt =~ tr/\n//) + 1;
+		next if $nlines <= 2;    # skip 1– or 2–line blocks
+
+		my @sorted = sort { $a <=> $b } @$lines;
+		printf "[%s] clone of %d-line block at lines %s\n",
+			$file, $nlines, join(", ", @sorted);
 	}
   }
 }
