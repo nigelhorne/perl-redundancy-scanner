@@ -19,7 +19,7 @@ jobs:
           perl-version: 'latest'
 
       - name: Install cpan dependencies
-        run: cpanm --installdeps .
+        run: cpanm -iqn PPI Scalar::Util DateTime
 
       - name: Run test suite
         run: prove -l
