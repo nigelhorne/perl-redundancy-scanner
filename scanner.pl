@@ -319,7 +319,7 @@ for my $file (@ARGV) {
 		my $lines = $buckets{$txt};
 		next unless @$lines > 1;
 		my $nlines = ($txt =~ tr/\n//) + 1;
-		next if $nlines <= 2;    # skip 1– or 2–line blocks
+		next if $nlines <= 5;    # skip small blocks - TODO: make configurable
 
 		my @sorted = sort { $a <=> $b } @$lines;
 		printf "[%s] clone of %d-line block at lines %s\n",
