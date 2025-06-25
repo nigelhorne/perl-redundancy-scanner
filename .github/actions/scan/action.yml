@@ -1,0 +1,32 @@
+---
+name: 'Perl Redundancy Scanner'
+description: 'Run redundancy scanner and upload SARIF results'
+
+inputs:
+  files:
+    description: 'Glob of Perl files to scan'
+    required: true
+    default: '**/*.pm **/*.pl'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout action code
+      uses: actions/checkout@v3
+
+    - name: Setup Perl
+      uses: shogo82148/actions-setup-perl@v1
+      with:
+        perl-version: 'latest'
+
+    - name: Install scanner deps
+      run: cpanm --installdeps .
+
+    - name: Run scanner
+      run: |
+        perl scanner.pl --sarif ${{ inputs.files }} > redundancy.sarif
+
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: redundancy.sarif

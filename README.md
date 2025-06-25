@@ -17,12 +17,25 @@ Make sure `bin/scan-redundancy` is executable:
 
     ./bin/scan-redundancy lib/*.pm script.pl
 
-## CI
+## Invocation in Your Workflow
 
-We run a quick smoke test on each push via GitHub Actions (see `.github/workflows/perl.yml`).
+Add this to your Actions workflow
 
-## Extending
+```yaml
+---
+name: Redundancy CI
 
-- Add more `coerce_*` rules in `implies()`
-- Plug in SARIF JSON output
-- Write more tests in `t/`
+on: [push,pull_request]
+
+jobs:
+  redundancy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Run Perl redundancy scan
+        uses: nigelhorne/perl-redundancy-scanner/.github/actions/scan@v1
+        with:
+          files: 'lib/**/*.pm script/**/*.pl'
+  
+```
