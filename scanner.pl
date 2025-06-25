@@ -342,6 +342,7 @@ for my $cn (@$conds[1..$#$conds]) {
             next;
           }
         }
+	next CMP unless defined $ov; 
         if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
           (my $pat = $1) =~ s{^/|/$}{}g;
           _emit("duplicate-regex",
