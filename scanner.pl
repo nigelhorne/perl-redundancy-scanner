@@ -126,93 +126,147 @@ for my $file (@ARGV) {
 
   # Main loop: compound statements
   my $cmps = $doc->find('PPI::Statement::Compound') || [];
-  CMP: for my $st (@$cmps) {
-    next unless blessed($st) && $st->can('schild') && $st->type =~ /^(?:if|elsif|unless|while|until)$/;
+  # Find all the "if" statements that start an if–elsif chain
+
+  # Now iterate by index so we can tell who’s a chain head
+  CMP: for my $i (0 .. $#$cmps) {
+    my $st = $cmps->[$i];
+    next unless blessed($st)
+             && $st->can('schild')
+             && $st->type =~ /^(?:if|elsif|unless|while|until)$/;
 
     my $cond_node = $st->schild(1);
     next unless blessed($cond_node) && $cond_node->can('content');
     my $raw = $cond_node->content;
     my $ln  = $st->line_number;
 
-    #
-    # STEP 1: always-true / always-false detection
-    #
+  #
+  # STEP 0: if+elsif chain handling via PPI::Structure::Condition
+  #
+  if ($st->type eq 'if') {
+    # grab the if‐condition plus any elsif-conditions
+    my $conds = $st->find('PPI::Structure::Condition') || [];
+    # only interested when there’s at least one elsif
+    if (@$conds > 1) {
+      # parse the very first (the 'if')
+      my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
+
+      # now walk each elsif
+# … after you’ve detected @conds, and parsed ($v0,$o0,$x0) …
+
+for my $cn (@$conds[1..$#$conds]) {
+  my $raw2 = $cn->content;
+  my $ln2  = $cn->line_number;
+
+  # extract into lexicals first
+  my ($v1,$o1,$x1) = parse_cond($raw2);
+
+  # only if it’s the same var *and* implied by the if-cond
+  if (defined $v1
+      && $v1 eq $v0
+      && implies($o0,$x0,$o1,$x1)
+  ) {
+    _emit(
+      "elsif-redundancy",
+      qq{redundant elsif "$raw2" implied by "} 
+        . $conds->[0]->content
+        . qq{"},
+      $file, $ln2
+    );
+  }
+}
+      
+
+      # skip everything else for this compound
+      next CMP;
+    }
+  }
+    
+
+    # ————————————————————————————————————————————————————————————————————————
+    # STEP 1: always-true / always-false detection for standalone statements
+    # ————————————————————————————————————————————————————————————————————————
     {
-      # 1) strip any outer parens so we match "(foo() == 10)" or "foo() == 10"
-      (my $expr = $raw) =~ s/^\s*\(//;
-      $expr           =~ s/\)\s*$//;
+      # A) strip outer parens
+      (my $expr = $raw) =~ s/^\s*[(
 
-      # ── A) sub-call v literal ────────────────────────────────────────────────
-      if ($expr =~ /^\s*([A-Za-z_]\w*)\(\)\s*(==|eq|!=|ne|>=|<=|>|<)\s*([+-]?\d+)\s*$/) {
+\[]\s*//;
+      $expr           =~ s/\s*[)\]
+
+]\s*$//;
+
+      # B) subcall() OP literal
+      if ($expr =~ /^\s*([A-Za-z_]\w*)\(\)\s*
+                     (==|eq|!=|ne|>=|<=|>|<)\s*
+                     ([+-]?\d+)\s*$/x)
+      {
         my ($sub,$op,$lit) = ($1,$2,$3);
-        next unless exists $CONST{"__SUB__$sub"};   # skip unknown subs
-
+        next unless exists $CONST{"__SUB__$sub"};
         my $lhs_txt = "$sub()";
         my $lhs_val = $CONST{"__SUB__$sub"};
-        my $true    = do {
-          if    ($op eq '==' or $op eq 'eq') {  $lhs_val == $lit }
-          elsif ($op eq '!=' or $op eq 'ne') {  $lhs_val != $lit }
-          elsif ($op eq '>')                 {  $lhs_val >  $lit }
-          elsif ($op eq '>=')                {  $lhs_val >= $lit }
-          elsif ($op eq '<')                 {  $lhs_val <  $lit }
-          elsif ($op eq '<=')                {  $lhs_val <= $lit }
-        };
-
-        my $kind = $true ? "always-true-test" : "always-false-test";
-        my $msg  = qq{always-} . ($true ? "true" : "false")
+        my $true =
+           $op eq '=='||$op eq 'eq'?($lhs_val == $lit):
+           $op eq '!='||$op eq 'ne'?($lhs_val != $lit):
+           $op eq '>'             ?($lhs_val >  $lit):
+           $op eq '>='            ?($lhs_val >= $lit):
+           $op eq '<'             ?($lhs_val <  $lit):
+           $op eq '<='            ?($lhs_val <= $lit):0;
+        my $kind = $true?"always-true-test":"always-false-test";
+        my $msg  = qq{always-} . ($true?"true":"false")
                    . qq{ test "$lhs_txt $op $lit"};
-
-        _emit($kind, $msg, $file, $ln);
-        next;
+        _emit($kind,$msg,$file,$ln);
+        next CMP;
       }
 
-      # ── B) now inline remaining trivial subs for the next patterns ──────────
+      # C) inline remaining subs
       (my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
                            { exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()" }eg;
 
-      # ── C) literal v literal ────────────────────────────────────────────────
-      if ($cmp =~ /^\s*([+-]?\d+)\s*(==|eq|!=|ne|>=|<=|>|<)\s*([+-]?\d+)\s*$/) {
+      # D) literal  OP  literal
+      if ($cmp =~ /^\s*([+-]?\d+)\s*
+                     (==|eq|!=|ne|>=|<=|>|<)\s*
+                     ([+-]?\d+)\s*$/x)
+      {
         my ($L,$op,$R) = ($1,$2,$3);
-        my $true = do {
-          if    ($op eq '==' or $op eq 'eq') {  $L == $R }
-          elsif ($op eq '!=' or $op eq 'ne') {  $L != $R }
-          elsif ($op eq '>')                 {  $L >  $R }
-          elsif ($op eq '>=')                {  $L >= $R }
-          elsif ($op eq '<')                 {  $L <  $R }
-          elsif ($op eq '<=')                {  $L <= $R }
-        };
-        my $kind = $true ? "always-true-test" : "always-false-test";
-        my $msg  = qq{always-} . ($true ? "true" : "false")
+        my $true =
+           $op eq '=='||$op eq 'eq'?($L == $R):
+           $op eq '!='||$op eq 'ne'?($L != $R):
+           $op eq '>'             ?($L >  $R):
+           $op eq '>='            ?($L >= $R):
+           $op eq '<'             ?($L <  $R):
+           $op eq '<='            ?($L <= $R):0;
+        my $kind = $true?"always-true-test":"always-false-test";
+        my $msg  = qq{always-} . ($true?"true":"false")
                    . qq{ test "$L $op $R"};
-        _emit($kind, $msg, $file, $ln);
-        next;
+        _emit($kind,$msg,$file,$ln);
+        next CMP;
       }
 
-      # ── D) $var v literal ───────────────────────────────────────────────────
-      if ($cmp =~ /^\s*\$(\w+)\s*(==|eq|!=|ne|>=|<=|>|<)\s*([+-]?\d+)\s*$/) {
+      # E) $var  OP  literal
+      if ($cmp =~ /^\s*\$(\w+)\s*
+                     (==|eq|!=|ne|>=|<=|>|<)\s*
+                     ([+-]?\d+)\s*$/x)
+      {
         my ($v,$op,$lit) = ($1,$2,$3);
         next unless exists $CONST{$v};
         my $lhs_txt = "\$$v";
         my $lhs_val = $CONST{$v};
-
-        my $true = do {
-          if    ($op eq '==' or $op eq 'eq') {  $lhs_val == $lit }
-          elsif ($op eq '!=' or $op eq 'ne') {  $lhs_val != $lit }
-          elsif ($op eq '>')                 {  $lhs_val >  $lit }
-          elsif ($op eq '>=')                {  $lhs_val >= $lit }
-          elsif ($op eq '<')                 {  $lhs_val <  $lit }
-          elsif ($op eq '<=')                {  $lhs_val <= $lit }
-        };
-        my $kind = $true ? "always-true-test" : "always-false-test";
-        my $msg  = qq{always-} . ($true ? "true" : "false")
+        my $true =
+           $op eq '=='||$op eq 'eq'?($lhs_val == $lit):
+           $op eq '!='||$op eq 'ne'?($lhs_val != $lit):
+           $op eq '>'             ?($lhs_val >  $lit):
+           $op eq '>='            ?($lhs_val >= $lit):
+           $op eq '<'             ?($lhs_val <  $lit):
+           $op eq '<='            ?($lhs_val <= $lit):0;
+        my $kind = $true?"always-true-test":"always-false-test";
+        my $msg  = qq{always-} . ($true?"true":"false")
                    . qq{ test "$lhs_txt $op $lit"};
-        _emit($kind, $msg, $file, $ln);
-        next;
+        _emit($kind,$msg,$file,$ln);
+        next CMP;
       }
 
-      # anything else (like @INC > 0) just falls through to the next check
+      # anything else (e.g. @INC > 0) falls through
     }
-
 
     #
     # STEP 2: boolean AND/OR redundancy
