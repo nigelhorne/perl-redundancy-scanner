@@ -56,66 +56,63 @@ sub parse_cond {
 }
 
 sub implies {
-  my ($op1, $x1, $op0, $x0) = @_;
+	my ($op1, $x1, $op0, $x0) = @_;
 
-  # only handle real integers
-  return 0
-    unless looks_like_number($x1)
-       && looks_like_number($x0);
+	# only handle real integers
+	return 0 unless looks_like_number($x1) && looks_like_number($x0);
 
-  # 1) Pick the “critical” test value for C1
-  my $tv;
-  if    ($op1 eq '>')   { $tv = $x1 + 1 }
-  elsif ($op1 eq '>=')  { $tv = $x1     }
-  elsif ($op1 eq '<')   { $tv = $x1 - 1 }
-  elsif ($op1 eq '<=')  { $tv = $x1     }
-  elsif ($op1 eq '==')  { $tv = $x1     }
-  elsif ($op1 eq '!=')  { return 0 }    # “not equal” is non-monotonic—never assume implication
-  else                  { return 0 }    # unknown operator
+	# 1) Pick the “critical” test value for C1
+	my $tv;
+	if    ($op1 eq '>')   { $tv = $x1 + 1 }
+	elsif ($op1 eq '>=')  { $tv = $x1     }
+	elsif ($op1 eq '<')   { $tv = $x1 - 1 }
+	elsif ($op1 eq '<=')  { $tv = $x1     }
+	elsif ($op1 eq '==')  { $tv = $x1     }
+	elsif ($op1 eq '!=')  { return 0 }    # “not equal” is non-monotonic—never assume implication
+	else                  { return 0 }    # unknown operator
 
-  # 2) If that test value doesn’t actually satisfy C1, C1’s domain is empty ⇒ no implication
-  return 0 unless eval("$tv $op1 $x1");
+	# 2) If that test value doesn’t actually satisfy C1, C1’s domain is empty ⇒ no implication
+	return 0 unless eval("$tv $op1 $x1");
 
-  # 3) Check whether it also satisfies C0
-  return eval("$tv $op0 $x0") ? 1 : 0;
+	# 3) Check whether it also satisfies C0
+	return eval("$tv $op0 $x0") ? 1 : 0;
 }
 
-
 sub _emit {
-  my ($rule, $msg, $file, $ln) = @_;
-  if ($do_sarif) {
-    push @sarif_results, {
-      ruleId  => $rule,
-      level   => "warning",
-      message => { text => $msg },
-      locations => [{
-        physicalLocation => {
-          artifactLocation => { uri       => $file },
-          region           => { startLine => $ln   },
-        }
-      }],
-    };
-  }
-  else {
-    printf "[%s:%d] %s\n", $file, $ln, $msg;
-  }
+	my ($rule, $msg, $file, $ln) = @_;
+
+	if($do_sarif) {
+		push @sarif_results, {
+			ruleId => $rule,
+			level => 'warning',
+			message => { text => $msg },
+			locations => [{
+				physicalLocation => {
+					artifactLocation => { uri => $file },
+					region => { startLine => $ln   },
+				}
+			}],
+		};
+	} else {
+		printf "[%s:%d] %s\n", $file, $ln, $msg;
+	}
 }
 
 #------------------------------------------------------------------------------
 # Entry point
 #------------------------------------------------------------------------------
 if (@ARGV && $ARGV[0] eq '--sarif') {
-  shift @ARGV;
-  $do_sarif = 1;
+	shift @ARGV;
+	$do_sarif = 1;
 }
+
 die "Usage: $0 [--sarif] file1.pl [file2.pl ...]\n" unless @ARGV;
 
 for my $file (@ARGV) {
-  print "\nScanning $file …\n";
-  my $doc = PPI::Document->new($file)
-    or warn "✗ Failed to parse $file: $@\n" and next;
+	print "\nScanning $file …\n";
+	my $doc = PPI::Document->new($file) or warn "✗ Failed to parse $file: $@" and next;
 
-  # Pre-scan constants
+	# Pre-scan constants
   my %CONST;
   for my $assign (@{ $doc->find('PPI::Statement') || [] }) {
     next unless blessed($assign) && $assign->can('content');
@@ -131,7 +128,7 @@ for my $file (@ARGV) {
   }
   for my $snode (@{ $doc->find('PPI::Statement::Sub') || [] }) {
     next unless blessed($snode) && $snode->isa('PPI::Statement::Sub');
-    my $name  = $snode->name  or next;
+    my $name = $snode->name  or next;
     my $block = $snode->block or next;
     next unless blessed($block) && $block->isa('PPI::Structure::Block');
     my $body  = $block->content;
