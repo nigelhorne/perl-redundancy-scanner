@@ -164,7 +164,7 @@ for my $cn (@$conds[1..$#$conds]) {
   # only if it’s the same var *and* implied by the if-cond
   if (defined $v1
       && $v1 eq $v0
-      && implies($o0,$x0,$o1,$x1)
+      && implies($o1,$x1,$o0,$x0)
   ) {
     _emit(
       "elsif-redundancy",
@@ -370,7 +370,7 @@ for my $cn (@$conds[1..$#$conds]) {
           my $ln2   = $el->line_number;
           if (my ($v1,$o1,$x1) = parse_cond($raw2)) {
             next unless $v0 && $v0 eq $v1;
-            if (implies($o0,$x0,$o1,$x1)) {
+	    if (implies($o1,$x1,$o0,$x0)) {
               _emit("elsif-redundancy",
                     qq{redundant elsif "$raw2" implied by "$chain[0]->schild(1)->content"},
                     $file, $ln2);
