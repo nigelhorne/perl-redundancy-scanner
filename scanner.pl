@@ -3,13 +3,13 @@ use strict;
 use warnings;
 use PPI;
 use Scalar::Util qw(blessed looks_like_number);
-use JSON::MaybeXS;    # JSON::XS, Cpanel::JSON::XS or JSON fallback
+use JSON::MaybeXS;	# JSON::XS, Cpanel::JSON::XS or JSON fallback
 
 #------------------------------------------------------------------------------
 # SARIF definitions
 #------------------------------------------------------------------------------
 my $SARIF_VERSION = "2.1.0";
-my $SARIF_SCHEMA  = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
+my $SARIF_SCHEMA = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
 
 my @RULE_DEFS = (
   { id => "boolean-redundancy",   shortDescription => { text => "Redundant comparison in boolean expression" } },
@@ -53,16 +53,30 @@ sub parse_cond {
 }
 
 sub implies {
-  my ($oA,$vA,$oB,$vB) = map { "" . $_ } @_;
-  return unless $oA =~ /^(?:>=?|<=?|==|eq|ne)$/ && $oB =~ /^(?:>=?|<=?|==|eq|ne)$/;
-  return unless defined( my $nA = coerce_number($vA) ) && defined( my $nB = coerce_number($vB) );
+  my ($op1, $x1, $op0, $x0) = @_;
 
-  no warnings 'numeric';
-  if ($oA =~ /^>=?$/ && $oB =~ /^>=?$/) { return $nA >= $nB }
-  if ($oA =~ /^<=?$/ && $oB =~ /^<=?$/) { return $nA <= $nB }
-  use warnings 'numeric';
-  return;
+  # only handle real integers
+  return 0
+    unless looks_like_number($x1)
+       && looks_like_number($x0);
+
+  # 1) Pick the “critical” test value for C1
+  my $tv;
+  if    ($op1 eq '>')   { $tv = $x1 + 1 }
+  elsif ($op1 eq '>=')  { $tv = $x1     }
+  elsif ($op1 eq '<')   { $tv = $x1 - 1 }
+  elsif ($op1 eq '<=')  { $tv = $x1     }
+  elsif ($op1 eq '==')  { $tv = $x1     }
+  elsif ($op1 eq '!=')  { return 0 }    # “not equal” is non-monotonic—never assume implication
+  else                  { return 0 }    # unknown operator
+
+  # 2) If that test value doesn’t actually satisfy C1, C1’s domain is empty ⇒ no implication
+  return 0 unless eval("$tv $op1 $x1");
+
+  # 3) Check whether it also satisfies C0
+  return eval("$tv $op0 $x0") ? 1 : 0;
 }
+
 
 sub _emit {
   my ($rule, $msg, $file, $ln) = @_;
@@ -121,7 +135,7 @@ for my $file (@ARGV) {
     if ($body =~ /\breturn\s+([+-]?\d+)\b/) {
       $CONST{"__SUB__$name"} = 0 + $1;
     }
-    
+  
   }
 
   # Main loop: compound statements
@@ -143,45 +157,33 @@ for my $file (@ARGV) {
   #
   # STEP 0: if+elsif chain handling via PPI::Structure::Condition
   #
-  if ($st->type eq 'if') {
-    # grab the if‐condition plus any elsif-conditions
-    my $conds = $st->find('PPI::Structure::Condition') || [];
-    # only interested when there’s at least one elsif
-    if (@$conds > 1) {
-      # parse the very first (the 'if')
-      my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
+# RIGHT: only skip when you actually have an if–elsif chain
+if ( $st->type eq 'if' ) {
+  my $conds = $st->find('PPI::Structure::Condition') || [];
 
-      # now walk each elsif
-# … after you’ve detected @conds, and parsed ($v0,$o0,$x0) …
-
-for my $cn (@$conds[1..$#$conds]) {
-  my $raw2 = $cn->content;
-  my $ln2  = $cn->line_number;
-
-  # extract into lexicals first
-  my ($v1,$o1,$x1) = parse_cond($raw2);
-
-  # only if it’s the same var *and* implied by the if-cond
-  if (defined $v1
-      && $v1 eq $v0
-      && implies($o1,$x1,$o0,$x0)
-  ) {
-    _emit(
-      "elsif-redundancy",
-      qq{redundant elsif "$raw2" implied by "} 
-        . $conds->[0]->content
-        . qq{"},
-      $file, $ln2
-    );
+  # only handle >1 conditions (i.e. if + at least one elsif)
+  if ( @$conds > 1 ) {
+    my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
+    for my $cn (@$conds[1..$#$conds]) {
+      my $raw2 = $cn->content;
+      my $ln2  = $cn->line_number;
+      my ($v1,$o1,$x1) = parse_cond($raw2) or next;
+      next unless $v1 eq $v0;
+      # check head ⇒ branch (not the other way around)
+      if ( implies($o0,$x0,$o1,$x1) ) {
+        _emit("elsif-redundancy",
+              qq{redundant elsif "$raw2" implied by "}
+                . $conds->[0]->content
+                . qq{"},
+              $file, $ln2);
+      }
+    }
+    next CMP;   # **only here** skip the other steps
   }
 }
-      
+# … now falls through to STEP 1 for all single‐cond IFs …
 
-      # skip everything else for this compound
-      next CMP;
-    }
-  }
-    
+  
 
     # ————————————————————————————————————————————————————————————————————————
     # STEP 1: always-true / always-false detection for standalone statements
