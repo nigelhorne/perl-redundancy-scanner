@@ -8,19 +8,19 @@ use JSON::MaybeXS;	# JSON::XS, Cpanel::JSON::XS or JSON fallback
 #------------------------------------------------------------------------------
 # SARIF definitions
 #------------------------------------------------------------------------------
-my $SARIF_VERSION = "2.1.0";
-my $SARIF_SCHEMA = "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json";
+my $SARIF_VERSION = '2.1.0';
+my $SARIF_SCHEMA = 'https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json';
 
 my @RULE_DEFS = (
-  { id => "boolean-redundancy",   shortDescription => { text => "Redundant comparison in boolean expression" } },
-  { id => "nested-threshold",     shortDescription => { text => "Nested numeric threshold redundant" } },
-  { id => "identical-structure",  shortDescription => { text => "Identical nested condition" } },
-  { id => "duplicate-test",       shortDescription => { text => "Exact duplicate test" } },
-  { id => "duplicate-regex",      shortDescription => { text => "Duplicate regex match" } },
-  { id => "elsif-redundancy",     shortDescription => { text => "Redundant elsif implied by earlier condition" } },
-  { id => "always-true-test",     shortDescription => { text => "Condition always true based on known constant" } },
-  { id => "always-false-test",    shortDescription => { text => "Condition always false based on known constant" } },
-  { id => "clone-detection",      shortDescription => { text => "Duplicate code block" } },
+	{ id => 'boolean-redundancy',   shortDescription => { text => 'Redundant comparison in boolean expression' } },
+	{ id => 'nested-threshold',     shortDescription => { text => 'Nested numeric threshold redundant' } },
+	{ id => 'identical-structure',  shortDescription => { text => 'Identical nested condition' } },
+	{ id => 'duplicate-test',       shortDescription => { text => 'Exact duplicate test' } },
+	{ id => 'duplicate-regex',      shortDescription => { text => 'Duplicate regex match' } },
+	{ id => 'elsif-redundancy',     shortDescription => { text => 'Redundant elsif implied by earlier condition' } },
+	{ id => 'always-true-test',     shortDescription => { text => 'Condition always true based on known constant' } },
+	{ id => 'always-false-test',    shortDescription => { text => 'Condition always false based on known constant' } },
+	{ id => 'clone-detection',      shortDescription => { text => 'Duplicate code block' } },
 );
 
 my $do_sarif = 0;
@@ -31,25 +31,28 @@ my @sarif_results;
 #------------------------------------------------------------------------------
 
 sub coerce_number {
-  my ($v) = @_;
-  return $v->epoch if blessed($v) && $v->isa('DateTime');
-  return 0 + $v if looks_like_number($v);
-  return int($v) if defined $v && $v =~ /^\s*([+-]?\d+)\s*$/;
-  return;
+	my $v = shift;
+
+	return $v->epoch if blessed($v) && $v->isa('DateTime');
+	return 0 + $v if looks_like_number($v);
+	return int($v) if defined $v && $v =~ /^\s*([+-]?\d+)\s*$/;
+	return;
 }
 
 sub parse_cond {
-  my $s = shift;
-  $s =~ s/^\s*\(//;  $s =~ s/\)\s*$//;
-  if ($s =~ /^\s*\$(\w+)\s*(>=|>|==|<=|<|eq|ne)\s*(.+?)\s*$/) {
-    return ($1, $2, $3);
-  }
-  if ($s =~ /^\s*(.+?)\s*(>=|>|==|<=|<|eq|ne)\s*\$(\w+)\s*$/) {
-    my ($val, $op, $var) = ($1, $2, $3);
-    my %flip = ( '<'=>'>', '<='=>'>=', '>' =>'<','>='=>'<=', '=='=>'==','eq'=>'eq','ne'=>'ne' );
-    return ($var, $flip{$op}, $val);
-  }
-  return;
+	my $s = shift;
+
+	$s =~ s/^\s*\(//;
+	$s =~ s/\)\s*$//;
+	if($s =~ /^\s*\$(\w+)\s*(>=|>|==|<=|<|eq|ne)\s*(.+?)\s*$/) {
+		return ($1, $2, $3);
+	}
+	if($s =~ /^\s*(.+?)\s*(>=|>|==|<=|<|eq|ne)\s*\$(\w+)\s*$/) {
+		my ($val, $op, $var) = ($1, $2, $3);
+		my %flip = ( '<'=>'>', '<='=>'>=', '>' =>'<','>='=>'<=', '=='=>'==','eq'=>'eq','ne'=>'ne' );
+		return ($var, $flip{$op}, $val);
+	}
+	return;
 }
 
 sub implies {
