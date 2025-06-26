@@ -56,26 +56,18 @@ sub parse_cond {
 }
 
 sub implies {
-	my ($op1, $x1, $op0, $x0) = @_;
+	my ($op1,$x1,$op0,$x0) = @_;
 
-	# only handle real integers
+	# guard non‐numeric
 	return 0 unless looks_like_number($x1) && looks_like_number($x0);
 
-	# 1) Pick the “critical” test value for C1
-	my $tv;
-	if    ($op1 eq '>')   { $tv = $x1 + 1 }
-	elsif ($op1 eq '>=')  { $tv = $x1     }
-	elsif ($op1 eq '<')   { $tv = $x1 - 1 }
-	elsif ($op1 eq '<=')  { $tv = $x1     }
-	elsif ($op1 eq '==')  { $tv = $x1     }
-	elsif ($op1 eq '!=')  { return 0 }    # “not equal” is non-monotonic—never assume implication
-	else                  { return 0 }    # unknown operator
-
-	# 2) If that test value doesn’t actually satisfy C1, C1’s domain is empty ⇒ no implication
-	return 0 unless eval("$tv $op1 $x1");
-
-	# 3) Check whether it also satisfies C0
-	return eval("$tv $op0 $x0") ? 1 : 0;
+	for my $tv ($x1+1, $x1-1, $x0+1, $x0-1) {
+		# only test points in C1’s domain
+		next unless eval("$tv $op1 $x1");
+		# if any such point fails C0, implication is false
+		return 0 unless eval("$tv $op0 $x0");
+	}
+	return 1;
 }
 
 sub _emit {
@@ -113,7 +105,7 @@ for my $file (@ARGV) {
 	my $doc = PPI::Document->new($file) or warn "✗ Failed to parse $file: $@" and next;
 
 	# Pre-scan constants
-  my %CONST;
+	my %CONST;
   for my $assign (@{ $doc->find('PPI::Statement') || [] }) {
     next unless blessed($assign) && $assign->can('content');
     my $src = $assign->content;
