@@ -222,25 +222,32 @@ for my $cn (@$conds[1..$#$conds]) {
       (my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
                            { exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()" }eg;
 
-      # D) literal  OP  literal
-      if ($cmp =~ /^\s*([+-]?\d+)\s*
-                     (==|eq|!=|ne|>=|<=|>|<)\s*
-                     ([+-]?\d+)\s*$/x)
-      {
-        my ($L,$op,$R) = ($1,$2,$3);
-        my $true =
-           $op eq '=='||$op eq 'eq'?($L == $R):
-           $op eq '!='||$op eq 'ne'?($L != $R):
-           $op eq '>'             ?($L >  $R):
-           $op eq '>='            ?($L >= $R):
-           $op eq '<'             ?($L <  $R):
-           $op eq '<='            ?($L <= $R):0;
-        my $kind = $true?"always-true-test":"always-false-test";
-        my $msg  = qq{always-} . ($true?"true":"false")
-                   . qq{ test "$L $op $R"};
-        _emit($kind,$msg,$file,$ln);
-        next CMP;
-      }
+	# (D) $var OP literal
+	if ($cmp =~ /^\s*\$(\w+)\s*
+		       (==|eq|!=|ne|>=|<=|>|<)\s*
+		       ([+-]?\d+)\s*$/x)
+	{
+	  my ($v,$op,$lit) = ($1,$2,$3);
+
+	  # <<< new guard: only if we really have a defined constant >>>
+	  next unless exists $CONST{$v} && defined $CONST{$v};
+
+	  my $lhs_txt = "\$$v";
+	  my $lhs_val = $CONST{$v};
+	  my $true =
+	     $op eq '==' || $op eq 'eq' ? ($lhs_val == $lit)
+	   : $op eq '!=' || $op eq 'ne' ? ($lhs_val != $lit)
+	   : $op eq '>'                ? ($lhs_val >  $lit)
+	   : $op eq '>='               ? ($lhs_val >= $lit)
+	   : $op eq '<'                ? ($lhs_val <  $lit)
+	   : $op eq '<='               ? ($lhs_val <= $lit)
+	   :                              0;
+	  my $kind = $true ? "always-true-test" : "always-false-test";
+	  my $msg  = qq{always-} . ($true ? "true" : "false")
+		     . qq{ test "$lhs_txt $op $lit"};
+	  _emit($kind, $msg, $file, $ln);
+	  next CMP;
+	}
 
       # E) $var  OP  literal
       if ($cmp =~ /^\s*\$(\w+)\s*
