@@ -106,18 +106,18 @@ for my $file (@ARGV) {
 
 	# Pre-scan constants
 	my %CONST;
-  for my $assign (@{ $doc->find('PPI::Statement') || [] }) {
-    next unless blessed($assign) && $assign->can('content');
-    my $src = $assign->content;
-    if ($src =~ /(?:my|our)\s+\$(\w+)\s*=\s*([+-]?\d+)\s*;/) {
-      $CONST{$1} = 0 + $2;
-      next;
-    }
-    if ($src =~ /\$(\w+)\s*=\s*(['"])(.*?)\2/) {
-      $CONST{$1} = $3;
-      next;
-    }
-  }
+	for my $assign (@{ $doc->find('PPI::Statement') || [] }) {
+		next unless blessed($assign) && $assign->can('content');
+		my $src = $assign->content;
+		if ($src =~ /(?:my|our)\s+\$(\w+)\s*=\s*([+-]?\d+)\s*;/) {
+			$CONST{$1} = 0 + $2;
+			next;
+		}
+		if ($src =~ /\$(\w+)\s*=\s*(['"])(.*?)\2/) {
+			$CONST{$1} = $3;
+			next;
+		}
+	}
   for my $snode (@{ $doc->find('PPI::Statement::Sub') || [] }) {
     next unless blessed($snode) && $snode->isa('PPI::Statement::Sub');
     my $name = $snode->name  or next;
@@ -127,7 +127,7 @@ for my $file (@ARGV) {
     if ($body =~ /\breturn\s+([+-]?\d+)\b/) {
       $CONST{"__SUB__$name"} = 0 + $1;
     }
-  
+
   }
 
   # Main loop: compound statements
@@ -175,7 +175,7 @@ if ( $st->type eq 'if' ) {
 }
 # … now falls through to STEP 1 for all single‐cond IFs …
 
-  
+
 
     # ————————————————————————————————————————————————————————————————————————
     # STEP 1: always-true / always-false detection for standalone statements
@@ -290,6 +290,8 @@ if ( $st->type eq 'if' ) {
             my ($v1,$o1,$x1) = @{ $terms[$i] };
             my ($v2,$o2,$x2) = @{ $terms[$j] };
             next unless $v1 eq $v2;
+		next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
+
             if    (implies($o1,$x1,$o2,$x2)) {
               _emit("boolean-redundancy",
                     qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
@@ -343,7 +345,7 @@ if ( $st->type eq 'if' ) {
             next;
           }
         }
-	next CMP unless defined $ov; 
+	next CMP unless defined $ov;
         if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
           (my $pat = $1) =~ s{^/|/$}{}g;
           _emit("duplicate-regex",
