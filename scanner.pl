@@ -404,33 +404,86 @@ if ( $st->type eq 'if' ) {
       }
     }
 
-    #
-    # STEP 4: elsif-chain redundancy
-    #
-    {
-      next unless $st->type eq 'if';
-      my @chain = ($st);
-      my $sib   = $st->snext_sibling;
-      while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
-        push @chain, $sib;
-        $sib = $sib->snext_sibling;
-      }
-      if (@chain > 1) {
-        my ($v0,$o0,$x0) = parse_cond($chain[0]->schild(1)->content) or ();
-        for my $el (@chain[1..$#chain]) {
-          my $raw2 = $el->schild(1)->content;
-          my $ln2   = $el->line_number;
-          if (my ($v1,$o1,$x1) = parse_cond($raw2)) {
-            next unless $v0 && $v0 eq $v1;
-	    if (implies($o1,$x1,$o0,$x0)) {
-              _emit("elsif-redundancy",
-                    qq{redundant elsif "$raw2" implied by "$chain[0]->schild(1)->content"},
-                    $file, $ln2);
-            }
-          }
-        }
-      }
-    }
+	#
+	# STEP 4: Enhanced elsif-chain redundancy
+	#
+	{
+		next unless $st->type eq 'if';
+		my @chain = ($st);
+		my $sib   = $st->snext_sibling;
+	    
+	    # Collect entire if-elsif chain
+	    while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
+		push @chain, $sib;
+		$sib = $sib->snext_sibling;
+	    }
+	    next if @chain <= 1;  # Skip if no elsifs
+	    
+	    my @conds;
+	    # Parse all conditions in the chain
+	    for my $node (@chain) {
+		my $raw_cond = $node->schild(1)->content;
+		my ($var, $op, $val) = parse_cond($raw_cond);
+		push @conds, {
+		    raw  => $raw_cond,
+		    var  => $var,
+		    op   => $op,
+		    val  => $val,
+		    node => $node,
+		    # Store numeric value if possible
+		    num  => looks_like_number($val) ? 0+$val : undef
+		};
+	    }
+	    
+	    # Check each elsif against all previous conditions
+	    for my $j (1 .. $#conds) {  # Start from first elsif
+		next unless $conds[$j]{var};  # Skip unparsed conditions
+		
+		for my $i (0 .. $j-1) {  # Compare against all previous
+		    next unless $conds[$i]{var};
+		    next unless $conds[$j]{var} eq $conds[$i]{var};
+		    
+		    # Handle numeric comparisons
+		    if (defined $conds[$j]{num} && defined $conds[$i]{num}) {
+			if (implies($conds[$j]{op}, $conds[$j]{num}, 
+				    $conds[$i]{op}, $conds[$i]{num})) 
+			{
+			    _emit("elsif-redundancy",
+				qq{redundant elsif "$conds[$j]{raw}" } .
+				qq{implied by "$conds[$i]{raw}"},
+				$file, $conds[$j]{node}->line_number);
+			    last;  # Break after first redundancy found
+			}
+		    }
+		    # Handle string comparisons
+		    elsif ($conds[$j]{op} =~ /^(?:eq|ne)$/ && 
+			   $conds[$i]{op} =~ /^(?:eq|ne)$/) 
+		    {
+			my $j_val = $conds[$j]{val};
+			my $i_val = $conds[$i]{val};
+			
+			# Check string implication
+			if ($conds[$j]{op} eq 'eq' && $conds[$i]{op} eq 'eq') {
+			    if ($j_val eq $i_val) {
+				_emit("duplicate-test",
+				    qq{duplicate test "$conds[$j]{raw}"},
+				    $file, $conds[$j]{node}->line_number);
+				last;
+			    }
+			}
+			elsif ($conds[$j]{op} eq 'ne' && $conds[$i]{op} eq 'eq') {
+			    if ($j_val ne $i_val) {
+				_emit("elsif-redundancy",
+				    qq{redundant elsif "$conds[$j]{raw}" } .
+				    qq{implied by "$conds[$i]{raw}"},
+				    $file, $conds[$j]{node}->line_number);
+				last;
+			    }
+			}
+		    }
+		}
+	    }
+	}
   } # end CMP loop
 
   #
