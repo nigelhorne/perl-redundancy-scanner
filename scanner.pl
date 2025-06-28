@@ -108,6 +108,8 @@ sub implies
 	# Return 0 if values aren't numeric
 	return 0 unless looks_like_number($x1) && looks_like_number($x0);
 
+	if($op0 eq '==' && $op1 eq '==') { return $x1 == $x0 };
+
 	# Skip non-relational operators (==, !=, eq, ne)
 	return 0 if $op1 =~ /^(?:==|!=|eq|ne)$/ || $op0 =~ /^(?:==|!=|eq|ne)$/;
 
@@ -209,6 +211,8 @@ for my $file (@ARGV) {
 	# Now iterate by index so we can tell who’s a chain head
 	CMP: for my $i (0 .. $#$cmps) {
 		my $st = $cmps->[$i];
+		# print __LINE__, ': ', $st->type(), "\n";
+		# print __LINE__, ': ', $st->content(), "\n";
 		next unless blessed($st)
 			&& $st->can('schild')
 			&& $st->type =~ /^(?:if|elsif|unless|while|until)$/;
@@ -225,8 +229,19 @@ for my $file (@ARGV) {
 		if($st->type eq 'if') {
 			my $conds = $st->find('PPI::Structure::Condition') || [];
 
+			# print __LINE__, ': ', @$conds, "\n";
 			# only handle >1 conditions (i.e. if + at least one elsif)
-			if ( @$conds > 1 ) {
+			if(@$conds > 1) {
+				# if($conds->[0]->content() eq $conds->[1]->content()) {
+					# _emit('nested-if-redundancy',
+						# qq{redundant duplicate if "}
+						# . $conds->[0]->content()
+						# . qq{"},
+						# $file, $conds->[1]->line_number()
+					# );
+					# next CMP;
+				# }
+				# print $conds->[0]->content(), "\n";
 				my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
 				for my $cn (@$conds[1..$#$conds]) {
 					my $raw2 = $cn->content;
@@ -234,6 +249,7 @@ for my $file (@ARGV) {
 					my ($v1,$o1,$x1) = parse_cond($raw2) or next;
 					next unless $v1 eq $v0;
 					# check head ⇒ branch (not the other way around)
+					# print __LINE__, ": $o0 - $x0 - $o1 - $x1\n";
 					if(implies($o0,$x0,$o1,$x1)) {
 						_emit('elsif-redundancy',
 						      qq{redundant elsif "$raw2" implied by "}
@@ -281,9 +297,9 @@ for my $file (@ARGV) {
 				next CMP;
 			}
 
-      # C) inline remaining subs
-      (my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
-                           { exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()" }eg;
+			# C) inline remaining subs
+			(my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
+			{ exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()" }eg;
 
 	# (D) $var OP literal
 	if ($cmp =~ /^\s*\$(\w+)\s*
@@ -354,29 +370,33 @@ for my $file (@ARGV) {
 
 	# STEP 3: nested-block redundancy
 	{
-	    my ($ov, $oo, $ox) = parse_cond($raw);
-	    my ($blk) = $st->find_first('PPI::Structure::Block');
-	    next unless $blk && blessed($blk) && $blk->isa('PPI::Structure::Block');
+		my ($ov, $oo, $ox) = parse_cond($raw);
+		my ($blk) = $st->find_first('PPI::Structure::Block');
+		next unless $blk && blessed($blk) && $blk->isa('PPI::Structure::Block');
 
-	    (my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
+		# print __LINE__, "\n";
+		# Get direct child statements inside block that are if/elsif/unless/while/until
+		my @inners = grep {
+			blessed($_)
+			&& $_->isa('PPI::Statement')
+			&& $_->schild(0)
+			&& $_->schild(0)->content =~ /^(if|elsif|unless|while|until)$/
+		} $blk->schildren;
 
-	    # Get direct child statements inside block that are if/elsif/unless/while/until
-	    my @inners = grep {
-		blessed($_)
-		&& $_->isa('PPI::Statement')
-		&& $_->schild(0)
-		&& $_->schild(0)->content =~ /^(if|elsif|unless|while|until)$/
-	    } $blk->schildren;
+		# print __LINE__, ": $raw\n", scalar(@inners), "\n";  # Debug print
+		# print Data::Dumper->new([$blk])->Dump();
 
-	    # print "$raw\n", scalar(@inners), "\n";  # Debug print
+		(my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
+		# print __LINE__, ": $outer\n";
 
-	    for my $in (@inners) {
-		my $c2 = $in->schild(1)->content;
-		my $l2 = $in->line_number;
-		(my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
+		for my $in (@inners) {
+			# print __LINE__, "\n";
+			my $c2 = $in->schild(1)->content;
+			my $l2 = $in->line_number;
+			(my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
 
-		if (my ($iv, $io, $ix) = parse_cond($c2)) {
-		    next unless defined $ov && $iv eq $ov;
+			if (my ($iv, $io, $ix) = parse_cond($c2)) {
+				next unless defined $ov && $iv eq $ov;
 
 		    if (implies($oo, $ox, $io, $ix)) {
 			_emit("nested-threshold",
