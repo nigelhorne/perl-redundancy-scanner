@@ -118,17 +118,17 @@ for my $file (@ARGV) {
 			next;
 		}
 	}
-  for my $snode (@{ $doc->find('PPI::Statement::Sub') || [] }) {
-    next unless blessed($snode) && $snode->isa('PPI::Statement::Sub');
-    my $name = $snode->name  or next;
-    my $block = $snode->block or next;
-    next unless blessed($block) && $block->isa('PPI::Structure::Block');
-    my $body  = $block->content;
-    if ($body =~ /\breturn\s+([+-]?\d+)\b/) {
-      $CONST{"__SUB__$name"} = 0 + $1;
-    }
+	for my $snode (@{ $doc->find('PPI::Statement::Sub') || [] }) {
+		next unless blessed($snode) && $snode->isa('PPI::Statement::Sub');
+		my $name = $snode->name  or next;
+		my $block = $snode->block or next;
+		next unless blessed($block) && $block->isa('PPI::Structure::Block');
 
-  }
+		my $body  = $block->content;
+		if($body =~ /\breturn\s+([+-]?\d+)\b/) {
+			$CONST{"__SUB__$name"} = 0 + $1;
+		}
+	}
 
   # Main loop: compound statements
   my $cmps = $doc->find('PPI::Statement::Compound') || [];
