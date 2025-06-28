@@ -243,29 +243,6 @@ if ( $st->type eq 'if' ) {
 	  next CMP;
 	}
 
-      # E) $var  OP  literal
-      if ($cmp =~ /^\s*\$(\w+)\s*
-                     (==|eq|!=|ne|>=|<=|>|<)\s*
-                     ([+-]?\d+)\s*$/x)
-      {
-        my ($v,$op,$lit) = ($1,$2,$3);
-        next unless exists $CONST{$v};
-        my $lhs_txt = "\$$v";
-        my $lhs_val = $CONST{$v};
-        my $true =
-           $op eq '=='||$op eq 'eq'?($lhs_val == $lit):
-           $op eq '!='||$op eq 'ne'?($lhs_val != $lit):
-           $op eq '>'             ?($lhs_val >  $lit):
-           $op eq '>='            ?($lhs_val >= $lit):
-           $op eq '<'             ?($lhs_val <  $lit):
-           $op eq '<='            ?($lhs_val <= $lit):0;
-        my $kind = $true?"always-true-test":"always-false-test";
-        my $msg  = qq{always-} . ($true?"true":"false")
-                   . qq{ test "$lhs_txt $op $lit"};
-        _emit($kind,$msg,$file,$ln);
-        next CMP;
-      }
-
       # anything else (e.g. @INC > 0) falls through
     }
 
