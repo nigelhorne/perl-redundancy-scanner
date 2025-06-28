@@ -218,71 +218,68 @@ for my $file (@ARGV) {
 		my $raw = $cond_node->content;
 		my $ln  = $st->line_number;
 
-  #
-  # STEP 0: if+elsif chain handling via PPI::Structure::Condition
-  #
-# RIGHT: only skip when you actually have an if–elsif chain
-if ( $st->type eq 'if' ) {
-  my $conds = $st->find('PPI::Structure::Condition') || [];
+		#
+		# STEP 0: if+elsif chain handling via PPI::Structure::Condition
+		#
+		# RIGHT: only skip when you actually have an if–elsif chain
+		if($st->type eq 'if') {
+			my $conds = $st->find('PPI::Structure::Condition') || [];
 
-  # only handle >1 conditions (i.e. if + at least one elsif)
-  if ( @$conds > 1 ) {
-    my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
-    for my $cn (@$conds[1..$#$conds]) {
-      my $raw2 = $cn->content;
-      my $ln2  = $cn->line_number;
-      my ($v1,$o1,$x1) = parse_cond($raw2) or next;
-      next unless $v1 eq $v0;
-      # check head ⇒ branch (not the other way around)
-      if ( implies($o0,$x0,$o1,$x1) ) {
-        _emit("elsif-redundancy",
-              qq{redundant elsif "$raw2" implied by "}
-                . $conds->[0]->content
-                . qq{"},
-              $file, $ln2);
-      }
-    }
-    next CMP;   # **only here** skip the other steps
-  }
-}
-# … now falls through to STEP 1 for all single‐cond IFs …
+			# only handle >1 conditions (i.e. if + at least one elsif)
+			if ( @$conds > 1 ) {
+				my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
+				for my $cn (@$conds[1..$#$conds]) {
+					my $raw2 = $cn->content;
+					my $ln2  = $cn->line_number;
+					my ($v1,$o1,$x1) = parse_cond($raw2) or next;
+					next unless $v1 eq $v0;
+					# check head ⇒ branch (not the other way around)
+					if(implies($o0,$x0,$o1,$x1)) {
+						_emit('elsif-redundancy',
+						      qq{redundant elsif "$raw2" implied by "}
+							. $conds->[0]->content
+							. qq{"},
+						      $file, $ln2);
+					}
+				}
+				next CMP;
+			}
+		}
 
+		# ————————————————————————————————————————————————————————————————————————
+		# STEP 1: always-true / always-false detection for standalone statements
+		# ————————————————————————————————————————————————————————————————————————
+		{
+			# A) strip outer parens
+			(my $expr = $raw) =~ s/^\s*[(
 
+				\[]\s*//;
+				$expr           =~ s/\s*[)\]
 
-    # ————————————————————————————————————————————————————————————————————————
-    # STEP 1: always-true / always-false detection for standalone statements
-    # ————————————————————————————————————————————————————————————————————————
-    {
-      # A) strip outer parens
-      (my $expr = $raw) =~ s/^\s*[(
+				]\s*$//;
 
-\[]\s*//;
-      $expr           =~ s/\s*[)\]
+			# B) subcall() OP literal
+			if ($expr =~ /^\s*([A-Za-z_]\w*)\(\)\s*
+				(==|eq|!=|ne|>=|<=|>|<)\s*
+				([+-]?\d+)\s*$/x) {
+				my ($sub,$op,$lit) = ($1,$2,$3);
 
-]\s*$//;
-
-      # B) subcall() OP literal
-      if ($expr =~ /^\s*([A-Za-z_]\w*)\(\)\s*
-                     (==|eq|!=|ne|>=|<=|>|<)\s*
-                     ([+-]?\d+)\s*$/x)
-      {
-        my ($sub,$op,$lit) = ($1,$2,$3);
-        next unless exists $CONST{"__SUB__$sub"};
-        my $lhs_txt = "$sub()";
-        my $lhs_val = $CONST{"__SUB__$sub"};
-        my $true =
-           $op eq '=='||$op eq 'eq'?($lhs_val == $lit):
-           $op eq '!='||$op eq 'ne'?($lhs_val != $lit):
-           $op eq '>'             ?($lhs_val >  $lit):
-           $op eq '>='            ?($lhs_val >= $lit):
-           $op eq '<'             ?($lhs_val <  $lit):
-           $op eq '<='            ?($lhs_val <= $lit):0;
-        my $kind = $true?"always-true-test":"always-false-test";
-        my $msg  = qq{always-} . ($true?"true":"false")
-                   . qq{ test "$lhs_txt $op $lit"};
-        _emit($kind,$msg,$file,$ln);
-        next CMP;
-      }
+				next unless exists $CONST{"__SUB__$sub"};
+				my $lhs_txt = "$sub()";
+				my $lhs_val = $CONST{"__SUB__$sub"};
+				my $true =
+					$op eq '=='||$op eq 'eq'?($lhs_val == $lit):
+					$op eq '!='||$op eq 'ne'?($lhs_val != $lit):
+					$op eq '>'             ?($lhs_val >  $lit):
+					$op eq '>='            ?($lhs_val >= $lit):
+					$op eq '<'             ?($lhs_val <  $lit):
+					$op eq '<='            ?($lhs_val <= $lit):0;
+				my $kind = $true?"always-true-test":"always-false-test";
+				my $msg  = qq{always-} . ($true?"true":"false")
+					. qq{ test "$lhs_txt $op $lit"};
+					_emit($kind,$msg,$file,$ln);
+				next CMP;
+			}
 
       # C) inline remaining subs
       (my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
