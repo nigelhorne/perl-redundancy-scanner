@@ -38,7 +38,7 @@ for (my $i = 0; $i < @tokens; $i++) {
 			$var = $t1->content;
 			$op  = $t2->content;
 			$num = $t3->content + 0;
-			print "Found condition: $var $op $num\n";
+			# print "Found condition: $var $op $num\n";
 			last;
 		}
 	}
