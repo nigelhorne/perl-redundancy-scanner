@@ -338,12 +338,11 @@ for my $file (@ARGV) {
             next unless $v1 eq $v2;
 		next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
 
-            if    (implies($o1,$x1,$o2,$x2)) {
+            if(implies($o1,$x1,$o2,$x2)) {
               _emit("boolean-redundancy",
                     qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
                     $file, $ln);
-            }
-            elsif (implies($o2,$x2,$o1,$x1)) {
+            } elsif (implies($o2,$x2,$o1,$x1)) {
               _emit("boolean-redundancy",
                     qq{"$comps[$i]" redundant in $bool_op with "$comps[$j]"},
                     $file, $ln);
@@ -353,53 +352,60 @@ for my $file (@ARGV) {
       }
     }
 
-    #
-    # STEP 3: nested-block redundancy
-    #
-    {
-      my ($ov,$oo,$ox) = parse_cond($raw);
-      my $blk = $st->schild(2);
-      next unless blessed($blk) && $blk->isa('PPI::Structure::Block');
+	# STEP 3: nested-block redundancy
+	{
+	    my ($ov, $oo, $ox) = parse_cond($raw);
+	    my ($blk) = $st->find_first('PPI::Structure::Block');
+	    next unless $blk && blessed($blk) && $blk->isa('PPI::Structure::Block');
 
-      (my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
-      my $inners = $blk->find('PPI::Statement::Compound') || [];
+	    (my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
 
-      for my $in (@$inners) {
-        next unless blessed($in) && $in->type =~ /^(?:if|elsif|unless|while|until)$/;
-        my $c2 = $in->schild(1)->content;
-        my $l2 = $in->line_number;
-        (my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
+	    # Get direct child statements inside block that are if/elsif/unless/while/until
+	    my @inners = grep {
+		blessed($_)
+		&& $_->isa('PPI::Statement')
+		&& $_->schild(0)
+		&& $_->schild(0)->content =~ /^(if|elsif|unless|while|until)$/
+	    } $blk->schildren;
 
-        if ( my ($iv,$io,$ix) = parse_cond($c2) ) {
-          next unless defined $ov && $iv eq $ov;
-          if (implies($oo,$ox,$io,$ix)) {
-            _emit("nested-threshold",
-                  qq{redundant "$inner" under "$outer"},
-                  $file, $l2);
-            next;
-          }
-          if ($st->type eq $in->type && $inner eq $outer) {
-            _emit("identical-structure",
-                  qq{nested identical $in->type($inner)},
-                  $file, $l2);
-            next;
-          }
-          if ($inner eq $outer) {
-            _emit("duplicate-test",
-                  qq{duplicate test "$inner"},
-                  $file, $l2);
-            next;
-          }
-        }
-	next unless defined $ov;	# Skip regex check if $ov undefined
-        if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
-          (my $pat = $1) =~ s{^/|/$}{}g;
-          _emit('duplicate-regex',
-                qq{duplicate regex match $pat},
-                $file, $l2);
-        }
-      }
-    }
+	    # print "$raw\n", scalar(@inners), "\n";  # Debug print
+
+	    for my $in (@inners) {
+		my $c2 = $in->schild(1)->content;
+		my $l2 = $in->line_number;
+		(my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
+
+		if (my ($iv, $io, $ix) = parse_cond($c2)) {
+		    next unless defined $ov && $iv eq $ov;
+
+		    if (implies($oo, $ox, $io, $ix)) {
+			_emit("nested-threshold",
+			    qq{redundant "$inner" under "$outer"},
+			    $file, $l2);
+			next;
+		    }
+		    if ($st->type eq $in->type && $inner eq $outer) {
+			_emit("identical-structure",
+			    qq{nested identical $in->type($inner)},
+			    $file, $l2);
+			next;
+		    }
+		    if ($inner eq $outer) {
+			_emit("duplicate-test",
+			    qq{duplicate test "$inner"},
+			    $file, $l2);
+			next;
+		    }
+		}
+		next unless defined $ov;  # Skip regex check if $ov undefined
+		if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
+		    (my $pat = $1) =~ s{^/|/$}{}g;
+		    _emit('duplicate-regex',
+			qq{duplicate regex match $pat},
+			$file, $l2);
+		}
+	    }
+	}
 
 	#
 	# STEP 4: Enhanced elsif-chain redundancy
