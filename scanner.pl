@@ -390,22 +390,22 @@ if ( $st->type eq 'if' ) {
 #------------------------------------------------------------------------------
 # Emit SARIF if requested
 #------------------------------------------------------------------------------
-if ($do_sarif) {
-  my $sarif = {
-    version => $SARIF_VERSION,
-    $SARIF_SCHEMA ? ( $SARIF_SCHEMA => $SARIF_SCHEMA ) : (),
-    runs => [
-      {
-        tool => {
-          driver => {
-            name    => "Perl Redundancy Scanner",
-            version => "1.0.0",
-            rules   => \@RULE_DEFS,
-          }
-        },
-        results => \@sarif_results,
-      }
-    ],
-  };
-  print JSON::MaybeXS->new( canonical => 1, pretty => 1 )->encode($sarif);
+if($do_sarif) {
+	my $sarif = {
+		version => $SARIF_VERSION,
+		$SARIF_SCHEMA ? ( '$schema' => $SARIF_SCHEMA ) : (),
+		runs => [
+			{
+				tool => {
+					driver => {
+						name    => "Perl Redundancy Scanner",
+						version => "1.0.0",
+						rules   => \@RULE_DEFS,
+					}
+				},
+				results => \@sarif_results,
+			}
+		],
+	};
+	print JSON::MaybeXS->new( canonical => 1, pretty => 1 )->encode($sarif);
 }
