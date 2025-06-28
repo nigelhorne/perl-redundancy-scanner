@@ -251,11 +251,19 @@ for my $file (@ARGV) {
 					# check head ⇒ branch (not the other way around)
 					# print __LINE__, ": $o0 - $x0 - $o1 - $x1\n";
 					if(implies($o0,$x0,$o1,$x1)) {
-						_emit('elsif-redundancy',
-						      qq{redundant elsif "$raw2" implied by "}
-							. $conds->[0]->content
-							. qq{"},
-						      $file, $ln2);
+						if($raw2 eq $conds->[0]->content()) {
+							_emit('if-redundancy',
+							      qq{nested identical if "$raw2" implied by "}
+								. $conds->[0]->content
+								. qq{"},
+							      $file, $ln2);
+						} else {
+							_emit('elsif-redundancy',
+							      qq{redundant elsif "$raw2" implied by "}
+								. $conds->[0]->content
+								. qq{"},
+							      $file, $ln2);
+						}
 					}
 				}
 				next CMP;
