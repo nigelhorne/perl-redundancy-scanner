@@ -202,21 +202,21 @@ for my $file (@ARGV) {
 		}
 	}
 
-  # Main loop: compound statements
-  my $cmps = $doc->find('PPI::Statement::Compound') || [];
-  # Find all the "if" statements that start an if–elsif chain
+	# Main loop: compound statements
+	my $cmps = $doc->find('PPI::Statement::Compound') || [];
+	# Find all the "if" statements that start an if–elsif chain
 
-  # Now iterate by index so we can tell who’s a chain head
-  CMP: for my $i (0 .. $#$cmps) {
-    my $st = $cmps->[$i];
-    next unless blessed($st)
-             && $st->can('schild')
-             && $st->type =~ /^(?:if|elsif|unless|while|until)$/;
+	# Now iterate by index so we can tell who’s a chain head
+	CMP: for my $i (0 .. $#$cmps) {
+		my $st = $cmps->[$i];
+		next unless blessed($st)
+			&& $st->can('schild')
+			&& $st->type =~ /^(?:if|elsif|unless|while|until)$/;
 
-    my $cond_node = $st->schild(1);
-    next unless blessed($cond_node) && $cond_node->can('content');
-    my $raw = $cond_node->content;
-    my $ln  = $st->line_number;
+		my $cond_node = $st->schild(1);
+		next unless blessed($cond_node) && $cond_node->can('content');
+		my $raw = $cond_node->content;
+		my $ln  = $st->line_number;
 
   #
   # STEP 0: if+elsif chain handling via PPI::Structure::Condition
