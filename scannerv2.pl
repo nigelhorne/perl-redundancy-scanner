@@ -2,61 +2,128 @@
 use strict;
 use warnings;
 use PPI;
+use JSON::PP;
 
-my $filename = shift or die "Usage: $0 file.pl\n";
-my $doc = PPI::Document->new($filename) or die "Failed to parse $filename\n";
+# Parse options
+my $sarif = 0;
+if (@ARGV && $ARGV[0] eq '--sarif') {
+    $sarif = 1;
+    shift @ARGV;
+}
 
-my @tokens = $doc->tokens;
-my @seen;
+die "Usage: $0 [--sarif] file1.pl [file2.pl ...]\n" unless @ARGV;
 
-for (my $i = 0; $i < @tokens; $i++) {
-	my $tok = $tokens[$i];
+my @results;  # To hold all results for SARIF
 
-	next unless $tok->isa('PPI::Token::Word');
-	next unless $tok->content eq 'if' || $tok->content eq 'elsif';
+for my $filename (@ARGV) {
+    my $doc = PPI::Document->new($filename)
+      or warn "Could not parse $filename: $!\n" and next;
 
-	# Reset when a new 'if' is found (start of chain)
-	@seen = () if $tok->content eq 'if';
+    my @tokens = $doc->tokens;
+    my @seen;
 
-	my $cond = $tok->snext_sibling;
-	next unless $cond && $cond->isa('PPI::Structure::Condition');
+    for (my $i = 0; $i < @tokens; $i++) {
+        my $tok = $tokens[$i];
+        next unless $tok->isa('PPI::Token::Word');
+        next unless $tok->content eq 'if' || $tok->content eq 'elsif';
 
-	my @ctoks = $cond->tokens;
+        @seen = () if $tok->content eq 'if';
 
-	my ($var, $op, $num);
+        my $cond = $tok->snext_sibling;
+        next unless $cond && $cond->isa('PPI::Structure::Condition');
 
-	# Extract tokens ignoring whitespace
-	my @meaningful = grep { ! $_->isa('PPI::Token::Whitespace') } @ctoks;
+        my @ctoks = $cond->tokens;
+        my ($var, $op, $num);
 
-	for my $j (0 .. $#meaningful - 2) {
-		my ($t1, $t2, $t3) = @meaningful[$j, $j+1, $j+2];
+        # Ignore whitespace for pattern matching
+        my @meaningful = grep { ! $_->isa('PPI::Token::Whitespace') } @ctoks;
 
-		if ( ($t1->isa('PPI::Token::Symbol') || $t1->isa('PPI::Token::Word'))
-			&& $t2->isa('PPI::Token::Operator')
-			&& $t3->isa('PPI::Token::Number') )
-		{
-			$var = $t1->content;
-			$op  = $t2->content;
-			$num = $t3->content + 0;
-			# print "Found condition: $var $op $num\n";
-			last;
-		}
-	}
-	
-	next unless defined $var && defined $op && defined $num;
-	next unless $op eq '>';
+        for my $j (0 .. $#meaningful - 2) {
+            my ($t1, $t2, $t3) = @meaningful[$j, $j+1, $j+2];
 
-	for my $prev (@seen) {
-		if ($prev->{var} eq $var && $prev->{op} eq '>' && $prev->{num} >= $num) {
-			print "Redundant test on line ", $tok->line_number, ": $var > $num is implied by earlier $var > $prev->{num} (line $prev->{line})\n";
-			last;
-		}
-	}
+            if ( ($t1->isa('PPI::Token::Symbol') || $t1->isa('PPI::Token::Word'))
+                && $t2->isa('PPI::Token::Operator')
+                && $t3->isa('PPI::Token::Number') )
+            {
+                $var = $t1->content;
+                $op  = $t2->content;
+                $num = $t3->content + 0;
+                last;
+            }
+        }
 
-	push @seen, {
-		var  => $var,
-		op   => $op,
-		num  => $num,
-		line => $tok->line_number,
-	};
+        next unless defined $var && defined $op && defined $num;
+        next unless $op eq '>';
+
+        for my $prev (@seen) {
+            if ($prev->{var} eq $var && $prev->{op} eq '>' && $prev->{num} >= $num) {
+                my $msg = "Redundant test on line ".$tok->line_number.
+                          ": $var > $num is implied by earlier $var > $prev->{num} (line $prev->{line})";
+
+                if ($sarif) {
+                    push @results, {
+                        file       => $filename,
+                        message    => $msg,
+                        line       => $tok->line_number,
+                        start_line => $tok->line_number,
+                    };
+                } else {
+                    print "$filename: $msg\n";
+                }
+                last;
+            }
+        }
+
+        push @seen, {
+            var  => $var,
+            op   => $op,
+            num  => $num,
+            line => $tok->line_number,
+        };
+    }
+}
+
+if ($sarif) {
+    my $sarif_obj = {
+        version => "2.1.0",
+        '$schema' => "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0.json",
+        runs    => [ {
+            tool => {
+                driver => {
+                    name => "PerlRedundantTestScanner",
+                    informationUri => "https://example.com",
+                    rules => [
+                        {
+                            id => "RedundantTest",
+                            shortDescription => { text => "Redundant conditional test" },
+                            helpUri => "https://example.com/docs/redundant-tests",
+                            properties => {
+                                category => "Logic",
+                                severity => "warning",
+                            },
+                        }
+                    ],
+                }
+            },
+            results => [
+                map {
+                    {
+                        ruleId => "RedundantTest",
+                        level  => "warning",
+                        message => { text => $_->{message} },
+                        locations => [
+                            {
+                                physicalLocation => {
+                                    artifactLocation => { uri => $_->{file} },
+                                    region => { startLine => $_->{start_line} },
+                                }
+                            }
+                        ],
+                    }
+                } @results
+            ],
+        } ]
+    };
+
+    print JSON::PP->new->utf8->pretty->encode($sarif_obj);
 }
