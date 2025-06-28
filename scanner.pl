@@ -55,19 +55,91 @@ sub parse_cond {
 	return;
 }
 
-sub implies {
-	my ($op1,$x1,$op0,$x0) = @_;
+# Determine whether one numeric threshold condition implies another
+#
+# This function checks if Condition 1 ($var OP1 X1) logically implies
+# Condition 0 ($var OP0 X0), meaning that whenever Condition 1 is true,
+# Condition 0 must also be true.
+#
+# Parameters:
+#   $op1 : Operator from Condition 1 (must be '>', '>=', '<', or '<=')
+#   $x1  : Threshold value from Condition 1 (must be numeric)
+#   $op0 : Operator from Condition 0 (must be '>', '>=', '<', or '<=')
+#   $x0  : Threshold value from Condition 0 (must be numeric)
+#
+# Returns:
+#   1 if Condition 1 implies Condition 0 (all values satisfying Condition 1
+#      also satisfy Condition 0)
+#   0 if implication doesn't hold, or if invalid/non-numeric input is detected
+#
+# Logic Overview:
+#   1. Only handles threshold operators (>, >=, <, <=) - returns 0 for others
+#   2. Requires both conditions to test the same variable
+#   3. Requires both conditions to have the same direction (> vs <)
+#   4. Compares threshold values according to operator strictness:
+#
+#   For '>' direction:
+#     Condition 1  | Condition 0  | Implication holds when
+#     -------------|--------------|--------------------------
+#        $var > x1 | $var > x0   | x1 >= x0
+#        $var > x1 | $var >= x0  | x1 >= x0
+#        $var >= x1| $var > x0   | x1 > x0
+#        $var >= x1| $var >= x0  | x1 >= x0
+#
+#   For '<' direction:
+#     Condition 1  | Condition 0  | Implication holds when
+#     -------------|--------------|--------------------------
+#        $var < x1 | $var < x0   | x1 <= x0
+#        $var < x1 | $var <= x0  | x1 <= x0
+#        $var <= x1| $var < x0   | x1 < x0
+#        $var <= x1| $var <= x0  | x1 <= x0
+#
+# Examples:
+#   implies('>', 5, '>', 4)   # 1 (v>5 ⇒ v>4)
+#   implies('>=', 5, '>', 5)   # 0 (v=5 satisfies ≥5 but not >5)
+#   implies('<', 3, '<=', 3)   # 1 (v<3 ⇒ v≤3)
+#   implies('>', 5, '<', 4)    # 0 (different directions)
+#   implies('==', 5, '>', 4)   # 0 (equality not handled)
 
-	# guard non‐numeric
+sub implies
+{
+	my ($op1, $x1, $op0, $x0) = @_;
+
+	# Return 0 if values aren't numeric
 	return 0 unless looks_like_number($x1) && looks_like_number($x0);
 
-	for my $tv ($x1+1, $x1-1, $x0+1, $x0-1) {
-		# only test points in C1’s domain
-		next unless eval("$tv $op1 $x1");
-		# if any such point fails C0, implication is false
-		return 0 unless eval("$tv $op0 $x0");
+	# Skip non-relational operators (==, !=, eq, ne)
+	return 0 if $op1 =~ /^(?:==|!=|eq|ne)$/ || $op0 =~ /^(?:==|!=|eq|ne)$/;
+
+	# Get operator directions
+	my $dir1 = ($op1 =~ /^([<>])/)[0];
+	my $dir0 = ($op0 =~ /^([<>])/)[0];
+
+	# Different directions can't imply
+	return 0 if $dir1 ne $dir0;
+
+	# For '>' direction
+	if ($dir1 eq '>') {
+		if ($op1 eq '>') {
+			if ($op0 eq '>')	{ return $x1 >= $x0 }
+			elsif ($op0 eq '>=')	{ return $x1 >= $x0 }
+		} elsif ($op1 eq '>=') {
+			if ($op0 eq '>')	{ return $x1 > $x0 }
+			elsif ($op0 eq '>=')	{ return $x1 >= $x0 }
+		}
 	}
-	return 1;
+	# For '<' direction
+	elsif ($dir1 eq '<') {
+		if ($op1 eq '<') {
+			if ($op0 eq '<')	{ return $x1 <= $x0 }
+			elsif ($op0 eq '<=')	{ return $x1 <= $x0 }
+		} elsif ($op1 eq '<=') {
+			if ($op0 eq '<')	{ return $x1 < $x0 }
+			elsif ($op0 eq '<=')	{ return $x1 <= $x0 }
+		}
+	}
+
+	return 0;
 }
 
 sub _emit {
