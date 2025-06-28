@@ -322,10 +322,10 @@ if ( $st->type eq 'if' ) {
             next;
           }
         }
-	next CMP unless defined $ov;
+	next unless defined $ov;	# Skip regex check if $ov undefined
         if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
           (my $pat = $1) =~ s{^/|/$}{}g;
-          _emit("duplicate-regex",
+          _emit('duplicate-regex',
                 qq{duplicate regex match $pat},
                 $file, $l2);
         }
