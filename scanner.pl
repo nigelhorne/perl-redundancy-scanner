@@ -209,6 +209,8 @@ for my $file (@ARGV) {
 		}
 	}
 
+	# print __LINE__, ': ', Data::Dumper->new([\%CONST])->Dump();
+
 	# Main loop: compound statements
 	my $cmps = $doc->find('PPI::Statement::Compound') || [];
 	# Find all the "if" statements that start an if–elsif chain
@@ -218,6 +220,34 @@ for my $file (@ARGV) {
 		my $st = $cmps->[$i];
 		# print __LINE__, ': ', $st->type(), "\n";
 		# print __LINE__, ': ', $st->content(), "\n";
+		if($st->type eq 'while') {
+			my $blks = $st->find('PPI::Structure::Block') || [];
+			foreach my $blk (@{$blks}) {
+				# print Data::Dumper->new([$blk])->Dump();
+				my @inners = grep {
+					blessed($_)
+					&& $_->isa('PPI::Statement')
+				} $blk->children;
+				# print Data::Dumper->new([\@inners])->Dump();
+
+				# FIXME: only goes in one level
+				for my $in (@inners) {
+					my @statements = $in->children;
+					if(scalar(@statements) == 3) {
+						my $op = $in->child(1)->content();
+						if($op =~ /(?:--|\+\+)/) {
+							# Found a variable that is being changed
+							my $lhs = $in->child(0)->content();
+							$lhs =~ s/^\$//;
+							# print "$lhs $op\n";
+							delete $CONST{$lhs};
+						}
+						# TODO: assignment operator
+					}
+				}
+			}
+			next;
+		}
 		next unless blessed($st)
 			&& $st->can('schild')
 			&& $st->type =~ /^(?:if|elsif|unless|while|until)$/;
@@ -324,7 +354,6 @@ for my $file (@ARGV) {
 				# <<< new guard: only if we really have a defined constant >>>
 				next unless exists $CONST{$v} && defined $CONST{$v};
 
-				# FIXME: somewhere above, if there's a ++ or -- op, remove the variable from the CONST list
 				my $lhs_txt = "\$$v";
 				my $lhs_val = $CONST{$v};
 				my $true =
@@ -345,42 +374,42 @@ for my $file (@ARGV) {
 			# anything else (e.g. @INC > 0) falls through
 		}
 
-    #
-    # STEP 2: boolean AND/OR redundancy
-    #
-    {
-      my @c = split /(?:&&|\|\|)/, $raw;
-      my (@comps, @terms);
-      for my $p (@c) {
-        (my $t = $p) =~ s/^\s*\(//;  $t =~ s/\)\s*$//;
-        $t =~ s/^\s+|\s+$//g;
-        if ( my @pp = parse_cond($t) ) {
-          push @comps, $t;
-          push @terms, [ @pp ];
-        }
-      }
-      if (@terms > 1) {
-        my $bool_op = $raw =~ /&&/ ? 'AND' : 'OR';
-        for my $i (0 .. $#terms-1) {
-          for my $j ($i+1 .. $#terms) {
-            my ($v1,$o1,$x1) = @{ $terms[$i] };
-            my ($v2,$o2,$x2) = @{ $terms[$j] };
-            next unless $v1 eq $v2;
-		next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
+		#
+		# STEP 2: boolean AND/OR redundancy
+		#
+		{
+			my @c = split /(?:&&|\|\|)/, $raw;
+			my (@comps, @terms);
+			for my $p (@c) {
+			(my $t = $p) =~ s/^\s*\(//;  $t =~ s/\)\s*$//;
+			$t =~ s/^\s+|\s+$//g;
+			if ( my @pp = parse_cond($t) ) {
+			  push @comps, $t;
+			  push @terms, [ @pp ];
+			}
+			}
+			if (@terms > 1) {
+			my $bool_op = $raw =~ /&&/ ? 'AND' : 'OR';
+			for my $i (0 .. $#terms-1) {
+			  for my $j ($i+1 .. $#terms) {
+			    my ($v1,$o1,$x1) = @{ $terms[$i] };
+			    my ($v2,$o2,$x2) = @{ $terms[$j] };
+			    next unless $v1 eq $v2;
+				next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
 
-            if(implies($o1,$x1,$o2,$x2)) {
-              _emit("boolean-redundancy",
-                    qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
-                    $file, $ln);
-            } elsif (implies($o2,$x2,$o1,$x1)) {
-              _emit("boolean-redundancy",
-                    qq{"$comps[$i]" redundant in $bool_op with "$comps[$j]"},
-                    $file, $ln);
-            }
-          }
-        }
-      }
-    }
+			    if(implies($o1,$x1,$o2,$x2)) {
+			      _emit("boolean-redundancy",
+				    qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
+				    $file, $ln);
+			    } elsif (implies($o2,$x2,$o1,$x1)) {
+			      _emit("boolean-redundancy",
+				    qq{"$comps[$i]" redundant in $bool_op with "$comps[$j]"},
+				    $file, $ln);
+			    }
+			  }
+			}
+			}
+		}
 
 	# STEP 3: nested-block redundancy
 	{
