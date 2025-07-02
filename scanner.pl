@@ -1,4 +1,5 @@
 #!/usr/bin/env perl
+
 use strict;
 use warnings;
 use PPI;
@@ -323,25 +324,26 @@ for my $file (@ARGV) {
 				# <<< new guard: only if we really have a defined constant >>>
 				next unless exists $CONST{$v} && defined $CONST{$v};
 
-	  my $lhs_txt = "\$$v";
-	  my $lhs_val = $CONST{$v};
-	  my $true =
-	     $op eq '==' || $op eq 'eq' ? ($lhs_val == $lit)
-	   : $op eq '!=' || $op eq 'ne' ? ($lhs_val != $lit)
-	   : $op eq '>'                ? ($lhs_val >  $lit)
-	   : $op eq '>='               ? ($lhs_val >= $lit)
-	   : $op eq '<'                ? ($lhs_val <  $lit)
-	   : $op eq '<='               ? ($lhs_val <= $lit)
-	   :                              0;
-	  my $kind = $true ? "always-true-test" : "always-false-test";
-	  my $msg  = qq{always-} . ($true ? "true" : "false")
-		     . qq{ test "$lhs_txt $op $lit"};
-	  _emit($kind, $msg, $file, $ln);
-	  next CMP;
-	}
+				# FIXME: somewhere above, if there's a ++ or -- op, remove the variable from the CONST list
+				my $lhs_txt = "\$$v";
+				my $lhs_val = $CONST{$v};
+				my $true =
+				$op eq '==' || $op eq 'eq' ? ($lhs_val == $lit)
+					: $op eq '!=' || $op eq 'ne' ? ($lhs_val != $lit)
+					: $op eq '>'                ? ($lhs_val >  $lit)
+					: $op eq '>='               ? ($lhs_val >= $lit)
+					: $op eq '<'                ? ($lhs_val <  $lit)
+					: $op eq '<='               ? ($lhs_val <= $lit)
+					:                              0;
+				my $kind = $true ? "always-true-test" : "always-false-test";
+				my $msg  = qq{always-} . ($true ? "true" : "false")
+					. qq{ test "$lhs_txt $op $lit"};
+					_emit($kind, $msg, $file, $ln);
+				next CMP;
+			}
 
-      # anything else (e.g. @INC > 0) falls through
-    }
+			# anything else (e.g. @INC > 0) falls through
+		}
 
     #
     # STEP 2: boolean AND/OR redundancy
