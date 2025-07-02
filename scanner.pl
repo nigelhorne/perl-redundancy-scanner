@@ -172,9 +172,13 @@ if (@ARGV && $ARGV[0] eq '--sarif') {
 	$do_sarif = 1;
 }
 
-die "Usage: $0 [--sarif] file1.pl [file2.pl ...]\n" unless @ARGV;
+die "Usage: $0 [--sarif] file1.pl [file2.pl ...]" unless @ARGV;
 
 for my $file (@ARGV) {
+	if(-d $file) {
+		print "\nNot scanning directory $file …\n";
+		next;
+	}
 	print "\nScanning $file …\n";
 	my $doc = PPI::Document->new($file) or warn "✗ Failed to parse $file: $@" and next;
 
@@ -309,15 +313,15 @@ for my $file (@ARGV) {
 			(my $cmp = $expr) =~ s{\b([A-Za-z_]\w*)\(\)}
 			{ exists $CONST{"__SUB__$1"} ? $CONST{"__SUB__$1"} : "$1()" }eg;
 
-	# (D) $var OP literal
-	if ($cmp =~ /^\s*\$(\w+)\s*
-		       (==|eq|!=|ne|>=|<=|>|<)\s*
-		       ([+-]?\d+)\s*$/x)
-	{
-	  my ($v,$op,$lit) = ($1,$2,$3);
+			# (D) $var OP literal
+			if ($cmp =~ /^\s*\$(\w+)\s*
+			   (==|eq|!=|ne|>=|<=|>|<)\s*
+			   ([+-]?\d+)\s*$/x)
+			{
+				my ($v,$op,$lit) = ($1,$2,$3);
 
-	  # <<< new guard: only if we really have a defined constant >>>
-	  next unless exists $CONST{$v} && defined $CONST{$v};
+				# <<< new guard: only if we really have a defined constant >>>
+				next unless exists $CONST{$v} && defined $CONST{$v};
 
 	  my $lhs_txt = "\$$v";
 	  my $lhs_val = $CONST{$v};
