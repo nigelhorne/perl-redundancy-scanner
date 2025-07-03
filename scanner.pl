@@ -45,7 +45,7 @@ sub parse_cond {
 
 	$s =~ s/^\s*\(//;
 	$s =~ s/\)\s*$//;
-	if($s =~ /^\s*\$(\w+)\s*(>=|>|==|<=|<|eq|ne)\s*(.+?)\s*$/) {
+	if($s =~ /^\s*\$(\w+)\s*(>=|>|==|<=|<|eq|ne|=~|!~)\s*(.+?)\s*$/) {
 		return ($1, $2, $3);
 	}
 	if($s =~ /^\s*(.+?)\s*(>=|>|==|<=|<|eq|ne)\s*\$(\w+)\s*$/) {
@@ -105,6 +105,14 @@ sub parse_cond {
 sub implies
 {
 	my ($op1, $x1, $op0, $x0) = @_;
+
+	if(($op0 eq '=~') && ($op1 eq '=~')) {
+		return $x0 eq $x1;
+	}
+
+	if(($op0 eq '!~') && ($op1 eq '!~')) {
+		return $x0 eq $x1;
+	}
 
 	# Return 0 if values aren't numeric
 	return 0 unless looks_like_number($x1) && looks_like_number($x0);
@@ -276,15 +284,16 @@ for my $file (@ARGV) {
 					# );
 					# next CMP;
 				# }
-				# print $conds->[0]->content(), "\n";
+				# print __LINE__, ': ', $conds->[0]->content(), "\n";
 				my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
+				# print __LINE__, ": $v0 - $o0 - $x0\n";
 				for my $cn (@$conds[1..$#$conds]) {
 					my $raw2 = $cn->content;
 					my $ln2  = $cn->line_number;
 					my ($v1,$o1,$x1) = parse_cond($raw2) or next;
+					# print __LINE__, ": $o0 - $x0 - $o1 - $x1\n";
 					next unless $v1 eq $v0;
 					# check head ⇒ branch (not the other way around)
-					# print __LINE__, ": $o0 - $x0 - $o1 - $x1\n";
 					if(implies($o0,$x0,$o1,$x1)) {
 						if($raw2 eq $conds->[0]->content()) {
 							_emit('if-redundancy',
@@ -301,6 +310,7 @@ for my $file (@ARGV) {
 						}
 					}
 				}
+				# print "next CMP\n";
 				next CMP;
 			}
 		}
@@ -309,6 +319,8 @@ for my $file (@ARGV) {
 		# STEP 1: always-true / always-false detection for standalone statements
 		# ————————————————————————————————————————————————————————————————————————
 		{
+			# print "Step 1: $raw\n";
+
 			# A) strip outer parens
 			(my $expr = $raw) =~ s/^\s*[(
 
@@ -383,112 +395,121 @@ for my $file (@ARGV) {
 		# STEP 2: boolean AND/OR redundancy
 		#
 		{
+			# print "Step 2: $raw\n";
+
 			my @c = split /(?:&&|\|\|)/, $raw;
 			my (@comps, @terms);
+
 			for my $p (@c) {
-			(my $t = $p) =~ s/^\s*\(//;  $t =~ s/\)\s*$//;
-			$t =~ s/^\s+|\s+$//g;
-			if ( my @pp = parse_cond($t) ) {
-			  push @comps, $t;
-			  push @terms, [ @pp ];
+				(my $t = $p) =~ s/^\s*\(//;  $t =~ s/\)\s*$//;
+				$t =~ s/^\s+|\s+$//g;
+				if(my @pp = parse_cond($t)) {
+					push @comps, $t;
+					push @terms, [ @pp ];
+				}
 			}
-			}
-			if (@terms > 1) {
-			my $bool_op = $raw =~ /&&/ ? 'AND' : 'OR';
-			for my $i (0 .. $#terms-1) {
-			  for my $j ($i+1 .. $#terms) {
-			    my ($v1,$o1,$x1) = @{ $terms[$i] };
-			    my ($v2,$o2,$x2) = @{ $terms[$j] };
-			    next unless $v1 eq $v2;
-				next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
+			if(@terms > 1) {
+				my $bool_op = $raw =~ /&&/ ? 'AND' : 'OR';
 
-			    if(implies($o1,$x1,$o2,$x2)) {
-			      _emit("boolean-redundancy",
-				    qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
-				    $file, $ln);
-			    } elsif (implies($o2,$x2,$o1,$x1)) {
-			      _emit("boolean-redundancy",
-				    qq{"$comps[$i]" redundant in $bool_op with "$comps[$j]"},
-				    $file, $ln);
-			    }
-			  }
-			}
+				for my $i (0 .. $#terms-1) {
+					for my $j ($i+1 .. $#terms) {
+						my ($v1,$o1,$x1) = @{ $terms[$i] };
+						my ($v2,$o2,$x2) = @{ $terms[$j] };
+						next unless $v1 eq $v2;
+						next if $o1 eq '==' || $o2 eq '==';   # no implication between equalities
+
+						if(implies($o1,$x1,$o2,$x2)) {
+							_emit("boolean-redundancy",
+								qq{"$comps[$j]" redundant in $bool_op with "$comps[$i]"},
+								$file, $ln);
+						} elsif (implies($o2,$x2,$o1,$x1)) {
+							_emit("boolean-redundancy",
+								qq{"$comps[$i]" redundant in $bool_op with "$comps[$j]"},
+								$file, $ln);
+						}
+					}
+				}
 			}
 		}
 
-	# STEP 3: nested-block redundancy
-	{
-		my ($ov, $oo, $ox) = parse_cond($raw);
-		my ($blk) = $st->find_first('PPI::Structure::Block');
-		next unless $blk && blessed($blk) && $blk->isa('PPI::Structure::Block');
+		# STEP 3: nested-block redundancy
+		{
+			# print "Step 3: $raw\n";
 
-		# print __LINE__, "\n";
-		# Get direct child statements inside block that are if/elsif/unless/while/until
-		my @inners = grep {
-			blessed($_)
-			&& $_->isa('PPI::Statement')
-			&& $_->schild(0)
-			&& $_->schild(0)->content =~ /^(if|elsif|unless|while|until)$/
-		} $blk->schildren;
+			my ($ov, $oo, $ox) = parse_cond($raw);
+			my ($blk) = $st->find_first('PPI::Structure::Block');
+			next unless $blk && blessed($blk) && $blk->isa('PPI::Structure::Block');
 
-		# print __LINE__, ": $raw\n", scalar(@inners), "\n";  # Debug print
-		# print Data::Dumper->new([$blk])->Dump();
-
-		(my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
-		# print __LINE__, ": $outer\n";
-
-		for my $in (@inners) {
 			# print __LINE__, "\n";
-			my $c2 = $in->schild(1)->content;
-			my $l2 = $in->line_number;
-			(my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
+			# Get direct child statements inside block that are if/elsif/unless/while/until
+			my @inners = grep {
+				blessed($_)
+				&& $_->isa('PPI::Statement')
+				&& $_->schild(0)
+				&& $_->schild(0)->content =~ /^(if|elsif|unless|while|until)$/
+			} $blk->schildren;
 
-			if (my ($iv, $io, $ix) = parse_cond($c2)) {
-				next unless defined $ov && $iv eq $ov;
+			# print __LINE__, ": $raw\n", scalar(@inners), "\n";  # Debug print
+			# print Data::Dumper->new([$blk])->Dump();
 
-		    if (implies($oo, $ox, $io, $ix)) {
-			_emit("nested-threshold",
-			    qq{redundant "$inner" under "$outer"},
-			    $file, $l2);
-			next;
-		    }
-		    if ($st->type eq $in->type && $inner eq $outer) {
-			_emit("identical-structure",
-			    qq{nested identical $in->type($inner)},
-			    $file, $l2);
-			next;
-		    }
-		    if ($inner eq $outer) {
-			_emit("duplicate-test",
-			    qq{duplicate test "$inner"},
-			    $file, $l2);
-			next;
-		    }
+			(my $outer = $raw) =~ s/^\s*\(//;  $outer =~ s/\)\s*$//;  $outer =~ s/^\s+|\s+$//g;
+			# print __LINE__, ": $outer\n";
+
+			for my $in (@inners) {
+				# print __LINE__, "\n";
+				my $c2 = $in->schild(1)->content;
+				my $l2 = $in->line_number;
+				(my $inner = $c2) =~ s/^\s*\(//;  $inner =~ s/\)\s*$//;  $inner =~ s/^\s+|\s+$//g;
+
+				if (my ($iv, $io, $ix) = parse_cond($c2)) {
+					next unless defined $ov && $iv eq $ov;
+
+					if (implies($oo, $ox, $io, $ix)) {
+						_emit("nested-threshold",
+							qq{redundant "$inner" under "$outer"},
+							$file, $l2);
+						next;
+					}
+					if ($st->type eq $in->type && $inner eq $outer) {
+						_emit("identical-structure",
+							qq{nested identical $in->type($inner)},
+							$file, $l2);
+						next;
+					}
+					if ($inner eq $outer) {
+						_emit("duplicate-test",
+							qq{duplicate test "$inner"},
+							$file, $l2);
+						next;
+					}
+				}
+				# print __LINE__, ": $c2\n";
+				next unless defined $ov;  # Skip regex check if $ov undefined
+
+				# print __LINE__, ": $ov\n";
+				if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
+					(my $pat = $1) =~ s{^/|/$}{}g;
+					_emit('duplicate-regex',
+						qq{duplicate regex match $pat},
+						$file, $l2);
+				}
+			}
 		}
-		next unless defined $ov;  # Skip regex check if $ov undefined
-		if ($raw =~ /\Q\$$ov\s*=\~\s*(\/.+?\/)/ && $c2 =~ /\Q\$$ov\s*=\~\s*\Q$1\E/) {
-		    (my $pat = $1) =~ s{^/|/$}{}g;
-		    _emit('duplicate-regex',
-			qq{duplicate regex match $pat},
-			$file, $l2);
-		}
-	    }
-	}
 
-	#
-	# STEP 4: Enhanced elsif-chain redundancy
-	#
-	{
-		next unless $st->type eq 'if';
-		my @chain = ($st);
-		my $sib   = $st->snext_sibling;
+		#
+		# STEP 4: Enhanced elsif-chain redundancy
+		#
+		{
+			next unless $st->type eq 'if';
+			my @chain = ($st);
+			my $sib   = $st->snext_sibling;
 	    
-	    # Collect entire if-elsif chain
-	    while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
-		push @chain, $sib;
-		$sib = $sib->snext_sibling;
-	    }
-	    next if @chain <= 1;  # Skip if no elsifs
+			# Collect entire if-elsif chain
+			while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
+				push @chain, $sib;
+				$sib = $sib->snext_sibling;
+			}
+			next if @chain <= 1;  # Skip if no elsifs
 	    
 	    my @conds;
 	    # Parse all conditions in the chain
