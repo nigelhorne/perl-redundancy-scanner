@@ -356,18 +356,23 @@ for my $file (@ARGV) {
 
 				my $lhs_txt = "\$$v";
 				my $lhs_val = $CONST{$v};
-				my $true =
-				$op eq '==' || $op eq 'eq' ? ($lhs_val == $lit)
-					: $op eq '!=' || $op eq 'ne' ? ($lhs_val != $lit)
-					: $op eq '>'                ? ($lhs_val >  $lit)
-					: $op eq '>='               ? ($lhs_val >= $lit)
-					: $op eq '<'                ? ($lhs_val <  $lit)
-					: $op eq '<='               ? ($lhs_val <= $lit)
-					:                              0;
-				my $kind = $true ? "always-true-test" : "always-false-test";
-				my $msg  = qq{always-} . ($true ? "true" : "false")
-					. qq{ test "$lhs_txt $op $lit"};
-					_emit($kind, $msg, $file, $ln);
+				# Prevent 'Argument "0$month" isn't numeric in numeric le (<=)'
+				if(looks_like_number($lhs_val))  {
+					my $true =
+					$op eq '==' || $op eq 'eq' ? ($lhs_val == $lit)
+						: $op eq '!=' || $op eq 'ne' ? ($lhs_val != $lit)
+						: $op eq '>'                ? ($lhs_val >  $lit)
+						: $op eq '>='               ? ($lhs_val >= $lit)
+						: $op eq '<'                ? ($lhs_val <  $lit)
+						: $op eq '<='               ? ($lhs_val <= $lit)
+						:                              0;
+					my $kind = $true ? "always-true-test" : "always-false-test";
+					my $msg  = qq{always-} . ($true ? "true" : "false")
+						. qq{ test "$lhs_txt $op $lit"};
+						_emit($kind, $msg, $file, $ln);
+				} else {
+					delete $CONST{$v};
+				}
 				next CMP;
 			}
 
