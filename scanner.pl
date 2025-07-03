@@ -511,21 +511,21 @@ for my $file (@ARGV) {
 			}
 			next if @chain <= 1;  # Skip if no elsifs
 	    
-	    my @conds;
-	    # Parse all conditions in the chain
-	    for my $node (@chain) {
-		my $raw_cond = $node->schild(1)->content;
-		my ($var, $op, $val) = parse_cond($raw_cond);
-		push @conds, {
-		    raw  => $raw_cond,
-		    var  => $var,
-		    op   => $op,
-		    val  => $val,
-		    node => $node,
-		    # Store numeric value if possible
-		    num  => looks_like_number($val) ? 0+$val : undef
-		};
-	    }
+			my @conds;
+			# Parse all conditions in the chain
+			for my $node (@chain) {
+				my $raw_cond = $node->schild(1)->content;
+				my ($var, $op, $val) = parse_cond($raw_cond);
+				push @conds, {
+					raw  => $raw_cond,
+					var  => $var,
+					op   => $op,
+					val  => $val,
+					node => $node,
+					# Store numeric value if possible
+					num  => looks_like_number($val) ? 0+$val : undef
+				};
+			}
 	    
 	    # Check each elsif against all previous conditions
 	    for my $j (1 .. $#conds) {  # Start from first elsif
@@ -615,7 +615,7 @@ if($do_sarif) {
 			{
 				tool => {
 					driver => {
-						name    => "Perl Redundancy Scanner",
+						name => "Perl Redundancy Scanner",
 						version => "1.0.0",
 						rules   => \@RULE_DEFS,
 					}
