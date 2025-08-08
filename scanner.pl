@@ -22,6 +22,10 @@ my @RULE_DEFS = (
 	{ id => 'always-true-test',     shortDescription => { text => 'Condition always true based on known constant' } },
 	{ id => 'always-false-test',    shortDescription => { text => 'Condition always false based on known constant' } },
 	{ id => 'clone-detection',      shortDescription => { text => 'Duplicate code block' } },
+	{ id => 'complement-with-else',    shortDescription => { text => 'Redundant elsif - complement with else present' } },
+	{ id => 'adjacent-complements',    shortDescription => { text => 'Adjacent mutually exclusive conditions' } },
+	{ id => 'complement-conditions',   shortDescription => { text => 'Complement condition detected' } },
+	{ id => 'exhaustive-without-else', shortDescription => { text => 'Exhaustive conditions should use else clause' } },
 );
 
 my $do_sarif = 0;
@@ -284,6 +288,7 @@ for my $file (@ARGV) {
 					# );
 					# next CMP;
 				# }
+				detect_negated_condition_redundancy($st, $file);
 				# print __LINE__, ': ', $conds->[0]->content(), "\n";
 				my ($v0,$o0,$x0) = parse_cond($conds->[0]->content) or next CMP;
 				# print __LINE__, ": $v0 - $o0 - $x0\n";
@@ -311,7 +316,7 @@ for my $file (@ARGV) {
 					}
 				}
 				# print "next CMP\n";
-				next CMP;
+				# next CMP;
 			}
 		}
 
@@ -497,82 +502,93 @@ for my $file (@ARGV) {
 		# STEP 4: Enhanced elsif-chain redundancy
 		#
 		{
-			next unless $st->type eq 'if';
-			my @chain = ($st);
-			my $sib   = $st->snext_sibling;
-	    
-			# Collect entire if-elsif chain
-			while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
-				push @chain, $sib;
-				$sib = $sib->snext_sibling;
-			}
-			next if @chain <= 1;  # Skip if no elsifs
-	    
-			my @conds;
-			# Parse all conditions in the chain
-			for my $node (@chain) {
-				my $raw_cond = $node->schild(1)->content;
-				my ($var, $op, $val) = parse_cond($raw_cond);
-				push @conds, {
-					raw  => $raw_cond,
-					var  => $var,
-					op   => $op,
-					val  => $val,
-					node => $node,
-					# Store numeric value if possible
-					num  => looks_like_number($val) ? 0+$val : undef
-				};
-			}
-	    
-	    # Check each elsif against all previous conditions
-	    for my $j (1 .. $#conds) {  # Start from first elsif
-		next unless $conds[$j]{var};  # Skip unparsed conditions
-		
-		for my $i (0 .. $j-1) {  # Compare against all previous
-		    next unless $conds[$i]{var};
-		    next unless $conds[$j]{var} eq $conds[$i]{var};
+		    next unless $st->type eq 'if';
 		    
-		    # Handle numeric comparisons
-		    if (defined $conds[$j]{num} && defined $conds[$i]{num}) {
-			if (implies($conds[$j]{op}, $conds[$j]{num}, 
-				    $conds[$i]{op}, $conds[$i]{num})) 
-			{
-			    _emit("elsif-redundancy",
-				qq{redundant elsif "$conds[$j]{raw}" } .
-				qq{implied by "$conds[$i]{raw}"},
-				$file, $conds[$j]{node}->line_number);
-			    last;  # Break after first redundancy found
-			}
+		    detect_negated_condition_redundancy($st, $file);
+		    
+		    my @chain = ($st);
+		    my $sib   = $st->snext_sibling;
+
+		    # Collect entire if-elsif chain
+		    while (blessed($sib) && $sib->isa('PPI::Statement::Compound') && $sib->type eq 'elsif') {
+			push @chain, $sib;
+			$sib = $sib->snext_sibling;
 		    }
-		    # Handle string comparisons
-		    elsif ($conds[$j]{op} =~ /^(?:eq|ne)$/ && 
-			   $conds[$i]{op} =~ /^(?:eq|ne)$/) 
-		    {
-			my $j_val = $conds[$j]{val};
-			my $i_val = $conds[$i]{val};
+		    next if @chain <= 1;  # Skip if no elsifs
+
+		    my @conds;
+		    # Parse all conditions in the chain
+		    for my $node (@chain) {
+			my $raw_cond = $node->schild(1)->content;
+			my ($var, $op, $val) = parse_cond($raw_cond);
+			push @conds, {
+			    raw  => $raw_cond,
+			    var  => $var,
+			    op   => $op,
+			    val  => $val,
+			    node => $node,
+			    num  => looks_like_number($val) ? 0+$val : undef
+			};
+		    }
+
+		    # Check each elsif against all previous conditions (existing logic)
+		    for my $j (1 .. $#conds) {  # Start from first elsif
+			next unless $conds[$j]{var};  # Skip unparsed conditions
 			
-			# Check string implication
-			if ($conds[$j]{op} eq 'eq' && $conds[$i]{op} eq 'eq') {
-			    if ($j_val eq $i_val) {
-				_emit("duplicate-test",
-				    qq{duplicate test "$conds[$j]{raw}"},
-				    $file, $conds[$j]{node}->line_number);
-				last;
+			for my $i (0 .. $j-1) {  # Compare against all previous
+			    next unless $conds[$i]{var};
+			    next unless $conds[$j]{var} eq $conds[$i]{var};
+			    
+			    # Skip complement checking here since we handle it separately
+			    next if defined $conds[$j]{num} && defined $conds[$i]{num} &&
+				    are_complements($conds[$i]{op}, $conds[$i]{num}, 
+						  $conds[$j]{op}, $conds[$j]{num});
+			    
+			    # Handle numeric comparisons (existing implication logic)
+			    if (defined $conds[$j]{num} && defined $conds[$i]{num}) {
+				if (implies($conds[$j]{op}, $conds[$j]{num}, 
+					   $conds[$i]{op}, $conds[$i]{num})) 
+				{
+				    _emit("elsif-redundancy",
+					qq{redundant elsif "$conds[$j]{raw}" } .
+					qq{implied by "$conds[$i]{raw}"},
+					$file, $conds[$j]{node}->line_number);
+				    last;  # Break after first redundancy found
+				}
 			    }
-			}
-			elsif ($conds[$j]{op} eq 'ne' && $conds[$i]{op} eq 'eq') {
-			    if ($j_val ne $i_val) {
-				_emit("elsif-redundancy",
-				    qq{redundant elsif "$conds[$j]{raw}" } .
-				    qq{implied by "$conds[$i]{raw}"},
-				    $file, $conds[$j]{node}->line_number);
-				last;
+			    # Handle string comparisons (existing logic)
+			    elsif ($conds[$j]{op} =~ /^(?:eq|ne)$/ && 
+				   $conds[$i]{op} =~ /^(?:eq|ne)$/) 
+			    {
+				# Skip string complements since we handle them separately
+				next if are_complements($conds[$i]{op}, $conds[$i]{val}, 
+						      $conds[$j]{op}, $conds[$j]{val});
+				
+				my $j_val = $conds[$j]{val};
+				my $i_val = $conds[$i]{val};
+				
+				# Check string implication
+				if ($conds[$j]{op} eq 'eq' && $conds[$i]{op} eq 'eq') {
+				    if ($j_val eq $i_val) {
+					_emit("duplicate-test",
+					    qq{duplicate test "$conds[$j]{raw}"},
+					    $file, $conds[$j]{node}->line_number);
+					last;
+				    }
+				}
+				elsif ($conds[$j]{op} eq 'ne' && $conds[$i]{op} eq 'eq') {
+				    if ($j_val ne $i_val) {
+					_emit("elsif-redundancy",
+					    qq{redundant elsif "$conds[$j]{raw}" } .
+					    qq{implied by "$conds[$i]{raw}"},
+					    $file, $conds[$j]{node}->line_number);
+					last;
+				    }
+				}
 			    }
 			}
 		    }
-		}
-	    }
-	}
+		}	# End of Step 4
   } # end CMP loop
 
   #
@@ -622,4 +638,159 @@ if($do_sarif) {
 		],
 	};
 	print JSON::MaybeXS->new( canonical => 1, pretty => 1 )->encode($sarif);
+}
+
+# determine if two conditions are logical complements
+sub are_complements {
+    my ($op1, $x1, $op2, $x2) = @_;
+    
+    # Return 0 if values aren't numeric for relational operators
+    return 0 unless looks_like_number($x1) && looks_like_number($x2);
+    
+    # Convert to numbers for comparison
+    $x1 = 0 + $x1;
+    $x2 = 0 + $x2;
+    
+    # Check for direct complements with same threshold
+    if ($x1 == $x2) {
+        return 1 if ($op1 eq '>' && $op2 eq '<=');
+        return 1 if ($op1 eq '<=' && $op2 eq '>');
+        return 1 if ($op1 eq '<' && $op2 eq '>=');
+        return 1 if ($op1 eq '>=' && $op2 eq '<');
+        return 1 if ($op1 eq '==' && $op2 eq '!=');
+        return 1 if ($op1 eq '!=' && $op2 eq '==');
+        return 1 if ($op1 eq 'eq' && $op2 eq 'ne');
+        return 1 if ($op1 eq 'ne' && $op2 eq 'eq');
+    }
+    
+    # Check for adjacent threshold complements
+    # e.g., $x > 5 and $x <= 5 are complements
+    # but also $x >= 6 and $x <= 5 are complements (no gap between)
+    if ($op1 eq '>' && $op2 eq '<=') {
+        return ($x1 == $x2);  # $x > 5 complements $x <= 5
+    }
+    if ($op1 eq '<=' && $op2 eq '>') {
+        return ($x1 == $x2);  # $x <= 5 complements $x > 5
+    }
+    if ($op1 eq '<' && $op2 eq '>=') {
+        return ($x1 == $x2);  # $x < 5 complements $x >= 5
+    }
+    if ($op1 eq '>=' && $op2 eq '<') {
+        return ($x1 == $x2);  # $x >= 5 complements $x < 5
+    }
+    
+    # Check for off-by-one complements with integer values
+    if ($x1 == int($x1) && $x2 == int($x2)) {  # Both are integers
+        if ($op1 eq '>' && $op2 eq '<=' && $x2 == $x1) {
+            return 1;  # $x > 5 and $x <= 5
+        }
+        if ($op1 eq '>=' && $op2 eq '<' && $x1 == $x2) {
+            return 1;  # $x >= 5 and $x < 5
+        }
+        # Additional integer-specific cases
+        if ($op1 eq '>' && $op2 eq '<=' && $x1 + 1 == $x2) {
+            return 1;  # $x > 4 and $x <= 5 (covers all integers)
+        }
+        if ($op1 eq '>=' && $op2 eq '<' && $x1 == $x2 + 1) {
+            return 1;  # $x >= 6 and $x < 6
+        }
+    }
+    
+    return 0;
+}
+
+# Enhanced version of the elsif chain analysis from STEP 4
+sub detect_negated_condition_redundancy {
+    my ($st, $file) = @_;
+    
+    return unless $st->type eq 'if';
+    
+    # Get all children of the compound statement
+    my @children = $st->children;
+    
+    # Find condition structures and their positions
+    my @conditions;
+    my $has_else = 0;
+    
+    for my $i (0 .. $#children) {
+        my $child = $children[$i];
+        
+        # Look for condition structures
+        if (blessed($child) && $child->isa('PPI::Structure::Condition')) {
+            # Find the preceding keyword (if/elsif)
+            my $keyword = '';
+            for my $j (reverse 0 .. $i-1) {
+                if (blessed($children[$j]) && $children[$j]->isa('PPI::Token::Word')) {
+                    $keyword = $children[$j]->content;
+                    last if $keyword =~ /^(?:if|elsif)$/;
+                }
+            }
+            
+            # Parse the condition
+            my $raw_cond = $child->content;
+            my ($var, $op, $val) = parse_cond($raw_cond);
+            
+            push @conditions, {
+                raw      => $raw_cond,
+                var      => $var,
+                op       => $op,
+                val      => $val,
+                keyword  => $keyword,
+                line     => $child->line_number,
+                num      => (defined $val && looks_like_number($val)) ? 0+$val : undef
+            };
+        }
+        # Check for else keyword
+        elsif (blessed($child) && $child->isa('PPI::Token::Word') && $child->content eq 'else') {
+            $has_else = 1;
+        }
+    }
+    
+    # Need at least 2 conditions (if + elsif)
+    return if @conditions < 2;
+    
+    # Check for complement conditions
+    for my $i (0 .. $#conditions-1) {
+        next unless $conditions[$i]{var};  # Skip unparsed conditions
+        
+        for my $j ($i+1 .. $#conditions) {
+            next unless $conditions[$j]{var};
+            next unless $conditions[$j]{var} eq $conditions[$i]{var};  # Same variable
+            
+            # Check numeric complements
+            if (defined $conditions[$i]{num} && defined $conditions[$j]{num}) {
+                if (are_complements($conditions[$i]{op}, $conditions[$i]{num}, 
+                                  $conditions[$j]{op}, $conditions[$j]{num})) {
+                    
+                    my ($msg, $rule_id);
+                    
+                    if ($has_else && $j == $#conditions) {
+                        $rule_id = 'complement-with-else';
+                        $msg = qq{redundant elsif "$conditions[$j]{raw}" - } .
+                               qq{complement of "$conditions[$i]{raw}" with else clause present};
+                    } elsif ($j == $i + 1) {
+                        $rule_id = 'adjacent-complements';
+                        $msg = qq{adjacent complement conditions: "$conditions[$i]{raw}" } .
+                               qq{and "$conditions[$j]{raw}" are mutually exclusive};
+                    } else {
+                        $rule_id = 'complement-conditions';
+                        $msg = qq{complement condition "$conditions[$j]{raw}" } .
+                               qq{is opposite of "$conditions[$i]{raw}"};
+                    }
+                    
+                    _emit($rule_id, $msg, $file, $conditions[$j]{line});
+                }
+            }
+            # Check string complements
+            elsif ($conditions[$i]{op} =~ /^(?:eq|ne)$/ && $conditions[$j]{op} =~ /^(?:eq|ne)$/) {
+                if (are_complements($conditions[$i]{op}, $conditions[$i]{val}, 
+                                  $conditions[$j]{op}, $conditions[$j]{val})) {
+                    _emit('complement-conditions',
+                          qq{complement string condition "$conditions[$j]{raw}" } .
+                          qq{is opposite of "$conditions[$i]{raw}"},
+                          $file, $conditions[$j]{line});
+                }
+            }
+        }
+    }
 }
