@@ -189,7 +189,7 @@ for my $file (@ARGV) {
 		next;
 	}
 	print "\nScanning $file …\n";
-	my $doc = PPI::Document->new($file) or warn "✗ Failed to parse $file: $@" and next;
+	my $doc = PPI::Document->new($file) or warn "✗ Failed to parse $file: $PPI::Document::errstr" and next;
 
 	# Pre-scan constants
 	my %CONST;
@@ -322,12 +322,8 @@ for my $file (@ARGV) {
 			# print "Step 1: $raw\n";
 
 			# A) strip outer parens
-			(my $expr = $raw) =~ s/^\s*[(
-
-				\[]\s*//;
-				$expr           =~ s/\s*[)\]
-
-				]\s*$//;
+			(my $expr = $raw) =~ s/^\s*[(\[]\s*//;
+			$expr =~ s/\s*[)\]]\s*$//;
 
 			# B) subcall() OP literal
 			if ($expr =~ /^\s*([A-Za-z_]\w*)\(\)\s*
@@ -409,7 +405,8 @@ for my $file (@ARGV) {
 				}
 			}
 			if(@terms > 1) {
-				my $bool_op = $raw =~ /&&/ ? 'AND' : 'OR';
+				my $bool_op = $raw =~ /&&/ ? 'AND' : $raw =~ /\|\|/ ? 'OR' : undef;
+				next unless $bool_op; # Skip if neither found
 
 				for my $i (0 .. $#terms-1) {
 					for my $j ($i+1 .. $#terms) {
